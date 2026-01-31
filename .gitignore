@@ -1,0 +1,8 @@
+.worktrees/
+node_modules/
+dist/
+coverage/
+.env
+*.tgz
+site-fixtures.json
+docs/e2e/

@@ -1,0 +1,38 @@
+[
+  {
+    "site": "Example News",
+    "technique": "standard extraction",
+    "stable": {
+      "url": "https://example.com/article/2026/01/sample-article",
+      "minWords": 500
+    }
+  },
+  {
+    "site": "Example Tech Blog",
+    "technique": "JSON-LD extraction",
+    "priority": "important",
+    "tags": ["json-extraction"],
+    "stable": {
+      "url": "https://example.com/tech/sample-post",
+      "minWords": 300
+    },
+    "latest": {
+      "url": "https://example.com/tech/latest-post",
+      "minWords": 200
+    }
+  },
+  {
+    "site": "Example Paywalled",
+    "technique": "archive fallback",
+    "tags": ["archive-fallback"],
+    "paywalled": true,
+    "expectedToFail": true,
+    "stable": {
+      "url": "https://example.com/premium/sample",
+      "minWords": 100
+    },
+    "fetch": {
+      "minWords": 50
+    }
+  }
+]

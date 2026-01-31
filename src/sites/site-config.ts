@@ -1,0 +1,190 @@
+/**
+ * Site-specific configurations for article extraction
+ *
+ * Minimal defaults are included as examples.
+ * For production use, load site-specific configs via the plugin system.
+ * See docs/PLUGIN-SYSTEM.md for how to add your own site configurations.
+ */
+import { z } from 'zod';
+import { MINIMAL_DEFAULTS } from './minimal-defaults.js';
+import { USER_AGENTS, REFERERS, BLOCK_PATTERNS } from './constants.js';
+
+// Re-export constants for backward compatibility
+export { USER_AGENTS, REFERERS, BLOCK_PATTERNS };
+
+// --- Site config interface ---
+
+export interface SiteConfig {
+  /** Custom User-Agent to use for this site */
+  userAgent?: string;
+  /** Custom Referer header */
+  referer?: string;
+  /** Whether to allow cookies (default: false - cookies are cleared) */
+  allowCookies?: boolean;
+  /** Content selectors for archive extraction */
+  archiveSelectors?: string[];
+  /** Whether this site uses archive.is fallback */
+  usesArchiveFallback?: boolean;
+  /** URL patterns to block (access control scripts, etc.) */
+  blockPatterns?: RegExp[];
+  /** Prefer JSON-LD extraction (full content in structured data) */
+  preferJsonLd?: boolean;
+  /** Use Next.js __NEXT_DATA__ extraction for sites using Next.js framework */
+  useNextData?: boolean;
+  /** JSON path to extract content from __NEXT_DATA__ */
+  nextDataPath?: string;
+  /** Optional notes about site configuration */
+  notes?: string;
+}
+
+// --- Zod validation schema ---
+
+export const SiteConfigSchema = z.object({
+  userAgent: z.string().optional(),
+  referer: z.string().url().optional(),
+  allowCookies: z.boolean().optional(),
+  archiveSelectors: z.array(z.string()).optional(),
+  usesArchiveFallback: z.boolean().optional(),
+  blockPatterns: z.array(z.instanceof(RegExp)).optional(),
+  preferJsonLd: z.boolean().optional(),
+  useNextData: z.boolean().optional(),
+  nextDataPath: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+// --- Module-level variable ---
+
+const SITE_CONFIGS: Record<string, SiteConfig> = { ...MINIMAL_DEFAULTS };
+
+// --- Validation ---
+
+/**
+ * Validate all site configs at startup. Throws if any config is invalid.
+ */
+export function validateSiteConfigs(): void {
+  const errors: string[] = [];
+
+  for (const [domain, config] of Object.entries(SITE_CONFIGS)) {
+    const result = SiteConfigSchema.safeParse(config);
+    if (!result.success) {
+      errors.push(`${domain}: ${result.error.message}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid site configs:\n${errors.join('\n')}`);
+  }
+}
+
+/**
+ * Get site config statistics
+ */
+export function getSiteConfigStats(): {
+  total: number;
+  minimalDefaults: number;
+} {
+  return {
+    total: Object.keys(SITE_CONFIGS).length,
+    minimalDefaults: Object.keys(MINIMAL_DEFAULTS).length,
+  };
+}
+
+// --- Accessor functions ---
+
+/**
+ * Get site configuration for a URL
+ */
+export function getSiteConfig(url: string): SiteConfig | null {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '').replace(/^m\./, '');
+
+    // Direct match
+    if (SITE_CONFIGS[hostname]) {
+      return SITE_CONFIGS[hostname];
+    }
+
+    // Try subdomain match
+    const parts = hostname.split('.');
+    for (let i = 1; i < parts.length - 1; i++) {
+      const candidate = parts.slice(i).join('.');
+      if (SITE_CONFIGS[candidate]) {
+        return SITE_CONFIGS[candidate];
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get custom User-Agent for a site
+ */
+export function getSiteUserAgent(url: string): string | null {
+  return getSiteConfig(url)?.userAgent ?? null;
+}
+
+/**
+ * Get custom Referer for a site
+ */
+export function getSiteReferer(url: string): string | null {
+  return getSiteConfig(url)?.referer ?? null;
+}
+
+/**
+ * Check if a site uses archive fallback
+ */
+export function siteUsesArchiveFallback(url: string): boolean {
+  return getSiteConfig(url)?.usesArchiveFallback ?? false;
+}
+
+/**
+ * Get archive content selectors for a site
+ */
+export function getSiteArchiveSelectors(url: string): string[] {
+  return getSiteConfig(url)?.archiveSelectors ?? ['article', 'main', '.article-body'];
+}
+
+/**
+ * Get URL patterns to block for a site
+ */
+export function getSiteBlockPatterns(url: string): RegExp[] {
+  return getSiteConfig(url)?.blockPatterns ?? [];
+}
+
+/**
+ * Check if a request URL should be blocked for a site
+ */
+export function shouldBlockRequest(siteUrl: string, requestUrl: string): boolean {
+  const patterns = getSiteBlockPatterns(siteUrl);
+  return patterns.some((pattern) => pattern.test(requestUrl));
+}
+
+/**
+ * Check if a site prefers JSON-LD extraction
+ */
+export function sitePreferJsonLd(url: string): boolean {
+  return getSiteConfig(url)?.preferJsonLd ?? false;
+}
+
+/**
+ * Check if a site uses Next.js __NEXT_DATA__ extraction
+ */
+export function siteUseNextData(url: string): boolean {
+  return getSiteConfig(url)?.useNextData ?? false;
+}
+
+/**
+ * Get count of configured sites
+ */
+export function getSiteCount(): number {
+  return Object.keys(SITE_CONFIGS).length;
+}
+
+/**
+ * Get all configured domains
+ */
+export function getConfiguredDomains(): string[] {
+  return Object.keys(SITE_CONFIGS);
+}
