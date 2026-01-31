@@ -1,0 +1,16 @@
+.worktrees/
+node_modules/
+dist/
+coverage/
+.env
+*.tgz
+docs/e2e/
+
+# E2E test data
+e2e-fixtures.json
+e2e.db
+e2e.db-journal
+e2e-fetch.db
+
+# Reports
+agent-fetch-vs-webfetch-report.md

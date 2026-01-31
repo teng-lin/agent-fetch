@@ -1,0 +1,795 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { httpFetch, resolvePreset } from '../fetch/http-fetch.js';
+import type { ExtractionResult } from '../extract/types.js';
+
+// Mock dependencies
+vi.mock('../fetch/http-client.js', () => ({
+  httpRequest: vi.fn(),
+}));
+
+vi.mock('../fetch/content-validator.js', () => ({
+  quickValidate: vi.fn(),
+}));
+
+vi.mock('../extract/content-extractors.js', () => ({
+  extractFromHtml: vi.fn(),
+  detectWpRestApi: vi.fn().mockReturnValue(null),
+  tryNextDataExtraction: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock('../sites/site-config.js', () => ({
+  getSiteUserAgent: vi.fn(),
+  getSiteReferer: vi.fn(),
+  siteUseWpRestApi: vi.fn().mockReturnValue(false),
+  getSiteWpJsonApiPath: vi.fn().mockReturnValue(null),
+  siteUseNextData: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('../logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+import { httpRequest } from '../fetch/http-client.js';
+import { quickValidate } from '../fetch/content-validator.js';
+import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
+import {
+  getSiteUserAgent,
+  getSiteReferer,
+  siteUseWpRestApi,
+  getSiteWpJsonApiPath,
+} from '../sites/site-config.js';
+
+describe('httpFetch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns successful result with extracted content', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Article content</body></html>';
+
+    // Mock HTTP request success
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    // Mock validation success
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // Mock extraction success (textContent must be >100 chars)
+    const mockExtracted: ExtractionResult = {
+      title: 'Test Article',
+      byline: 'Test Author',
+      content: '<p>Article content</p>',
+      textContent: 'Article content. '.repeat(20), // >100 chars
+      excerpt: 'Article excerpt',
+      siteName: 'Example Site',
+      publishedTime: '2024-01-01',
+      lang: 'en',
+      method: 'readability',
+    };
+    vi.mocked(extractFromHtml).mockReturnValue(mockExtracted);
+
+    // Mock site config (no custom headers)
+    vi.mocked(getSiteUserAgent).mockReturnValue(null);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.url).toBe(url);
+    expect(result.title).toBe('Test Article');
+    expect(result.byline).toBe('Test Author');
+    expect(result.content).toBe('<p>Article content</p>');
+    expect(result.textContent).toBeDefined();
+    expect(result.textContent!.length).toBeGreaterThan(100);
+    expect(result.excerpt).toBe('Article excerpt');
+    expect(result.siteName).toBe('Example Site');
+    expect(result.publishedTime).toBe('2024-01-01');
+    expect(result.lang).toBe('en');
+    expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('applies site-specific user agent and referer headers', async () => {
+    const url = 'https://example.com/article';
+    const customUA = 'Mozilla/5.0 Custom';
+    const customReferer = 'https://google.com';
+
+    vi.mocked(getSiteUserAgent).mockReturnValue(customUA);
+    vi.mocked(getSiteReferer).mockReturnValue(customReferer);
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    await httpFetch(url);
+
+    expect(httpRequest).toHaveBeenCalledWith(
+      url,
+      expect.objectContaining({
+        'User-Agent': customUA,
+        Referer: customReferer,
+      }),
+      undefined
+    );
+  });
+
+  it('returns rate_limited error for 429 status', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 429,
+      headers: {},
+      cookies: [],
+      error: 'rate_limited',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('rate_limited');
+    expect(result.suggestedAction).toBe('wait_and_retry');
+    expect(result.hint).toBe('Too many requests, wait before retrying');
+    expect(result.errorDetails?.statusCode).toBe(429);
+  });
+
+  it('returns retry_with_extract suggestion for 403 status', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 403,
+      headers: {},
+      cookies: [],
+      error: 'forbidden',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('forbidden');
+    expect(result.suggestedAction).toBe('retry_with_extract');
+    expect(result.hint).toBe('Site may require browser rendering');
+    expect(result.errorDetails?.statusCode).toBe(403);
+  });
+
+  it('returns skip suggestion for non-403 HTTP errors', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 404,
+      headers: {},
+      cookies: [],
+      error: 'not_found',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('not_found');
+    expect(result.suggestedAction).toBe('skip');
+    expect(result.errorDetails?.statusCode).toBe(404);
+  });
+
+  it('returns skip for insufficient content', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Short</body></html>';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({
+      valid: false,
+      error: 'insufficient_content',
+      errorDetails: { wordCount: 10 },
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('insufficient_content');
+    expect(result.suggestedAction).toBe('skip');
+    expect(result.hint).toBe('Content is too short, may be a stub page');
+  });
+
+  it('returns retry_with_extract when extraction returns null', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Content</body></html>';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue(null);
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('extraction_failed');
+    expect(result.errorDetails?.type).toBe('null_result');
+    expect(result.suggestedAction).toBe('retry_with_extract');
+    expect(result.hint).toBe('Failed to parse HTML');
+  });
+
+  it('returns retry_with_extract when extracted content is too short', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Content</body></html>';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Short',
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('insufficient_content');
+    expect(result.suggestedAction).toBe('retry_with_extract');
+    expect(result.hint).toBe('Extracted content too short');
+    expect(result.errorDetails?.wordCount).toBeLessThan(100);
+  });
+
+  it('handles network errors gracefully', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockRejectedValue(new Error('Network timeout'));
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('network_error');
+    expect(result.suggestedAction).toBe('retry_with_extract');
+    expect(result.hint).toBe('Network request failed');
+    expect(result.errorDetails?.type).toBe('Error: Network timeout');
+  });
+
+  it('converts null fields to undefined in successful response', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Content</body></html>';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // Return extraction with null fields
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Test');
+    expect(result.byline).toBeUndefined();
+    expect(result.content).toBeUndefined();
+    expect(result.excerpt).toBeUndefined();
+    expect(result.siteName).toBeUndefined();
+    expect(result.publishedTime).toBeUndefined();
+    expect(result.lang).toBeUndefined();
+  });
+
+  it('retries on network timeout and succeeds', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Article content</body></html>';
+
+    // First call: network error (statusCode 0), second call: success
+    vi.mocked(httpRequest)
+      .mockResolvedValueOnce({
+        success: false,
+        statusCode: 0,
+        headers: {},
+        cookies: [],
+        error: 'Error: connect ETIMEDOUT',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: mockHtml,
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Retry Success',
+      byline: null,
+      content: '<p>Content</p>',
+      textContent: 'Article content. '.repeat(20),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Retry Success');
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after max retries on persistent network error', async () => {
+    const url = 'https://example.com/article';
+
+    // All 3 calls fail with network error
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 0,
+      headers: {},
+      cookies: [],
+      error: 'Error: connect ETIMEDOUT',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Error: connect ETIMEDOUT');
+    expect(httpRequest).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+  });
+
+  it('does not retry on HTTP errors', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 403,
+      headers: {},
+      cookies: [],
+      error: 'forbidden',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('forbidden');
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry SSRF protection errors', async () => {
+    const url = 'https://evil.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 0,
+      headers: {},
+      cookies: [],
+      error: 'SSRF protection: hostname evil.com resolves to private IP 192.168.1.1',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('SSRF protection');
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes mobile preset to httpRequest for Android Chrome UA', async () => {
+    const url = 'https://example.com/article';
+    const mobileUA =
+      'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36';
+
+    vi.mocked(getSiteUserAgent).mockReturnValue(mobileUA);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    await httpFetch(url);
+
+    // 3rd argument should be the Android Chrome preset (not undefined)
+    const presetArg = vi.mocked(httpRequest).mock.calls[0][2];
+    expect(presetArg).toBeDefined();
+    expect(typeof presetArg).toBe('string');
+  });
+
+  it('passes undefined preset for desktop UA', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(getSiteUserAgent).mockReturnValue(null);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    await httpFetch(url);
+
+    const presetArg = vi.mocked(httpRequest).mock.calls[0][2];
+    expect(presetArg).toBeUndefined();
+  });
+});
+
+describe('resolvePreset', () => {
+  it('returns Android Chrome preset for Android Chrome UA', () => {
+    const ua =
+      'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36';
+    const preset = resolvePreset(ua);
+    expect(preset).toBeDefined();
+    expect(typeof preset).toBe('string');
+  });
+
+  it('returns iOS Chrome preset for iPhone CriOS UA', () => {
+    const ua =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/143.0.0.0 Mobile/15E148 Safari/604.1';
+    const preset = resolvePreset(ua);
+    expect(preset).toBeDefined();
+  });
+
+  it('returns iOS Safari preset for iPhone Safari UA (no CriOS)', () => {
+    const ua =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+    const preset = resolvePreset(ua);
+    expect(preset).toBeDefined();
+  });
+
+  it('returns undefined for desktop Chrome UA', () => {
+    const ua =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
+    expect(resolvePreset(ua)).toBeUndefined();
+  });
+
+  it('returns undefined for null UA', () => {
+    expect(resolvePreset(null)).toBeUndefined();
+  });
+});
+
+describe('WP REST API primary extraction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fetches from WP REST API first when detected', async () => {
+    const url = 'https://example.com/2024/01/article-slug/';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: `<html><head><link rel="alternate" type="application/json" href="${apiUrl}" /></head><body>Teaser only.</body></html>`,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // detectWpRestApi finds the API URL
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    // Second httpRequest to WP API returns JSON
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'Full Article Title' },
+        content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
+        excerpt: { rendered: '<p>Article excerpt</p>' },
+        date_gmt: '2024-01-15T10:00:00',
+        _embedded: { author: [{ name: 'John Doe' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full Article Title');
+    expect(result.byline).toBe('John Doe');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+    // extractFromHtml should NOT be called when WP succeeds
+    expect(extractFromHtml).not.toHaveBeenCalled();
+    // Verify ?_embed was appended to the API URL
+    expect(vi.mocked(httpRequest).mock.calls[1][0]).toContain('?_embed');
+  });
+
+  it('skips WP REST API when not detected', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Good content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Good content word. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to DOM extraction when WP REST API fails', async () => {
+    const url = 'https://example.com/article';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+
+    vi.mocked(httpRequest)
+      .mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html:
+          '<html><head><link rel="alternate" type="application/json" href="' +
+          apiUrl +
+          '" /></head><body>Full article</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      })
+      // WP API request fails
+      .mockResolvedValueOnce({
+        success: false,
+        statusCode: 403,
+        headers: {},
+        cookies: [],
+        error: 'forbidden',
+      });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Good content word. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.extractionMethod).toBe('readability');
+    // WP was tried first (failed), then DOM extraction succeeded
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+    expect(extractFromHtml).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries WP REST API on insufficient_content validation failure', async () => {
+    const url = 'https://example.com/2024/01/my-article/';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/456';
+
+    // Page returns HTML with WP link tag but validator says insufficient_content
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: `<html><head><link rel="alternate" type="application/json" href="${apiUrl}" /></head><body>Short</body></html>`,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({
+      valid: false,
+      error: 'insufficient_content',
+      errorDetails: { wordCount: 10 },
+    });
+
+    // detectWpRestApi finds the API URL from HTML
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    // WP API returns full content
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'Full WP Article' },
+        content: { rendered: '<p>' + 'Full article content from WP API. '.repeat(50) + '</p>' },
+        excerpt: { rendered: '<p>Excerpt</p>' },
+        date_gmt: '2024-01-15T10:00:00',
+        _embedded: { author: [{ name: 'WP Author' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full WP Article');
+    expect(result.byline).toBe('WP Author');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses config wpJsonApiPath when HTML auto-detection fails', async () => {
+    const url = 'https://www.example-wp-site.com/my-article-slug';
+
+    // Page HTML has no WP link tag
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Short content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // HTML detection returns null (no WP link tag in HTML)
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
+
+    // Config returns custom API path
+    vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce('/wp-json/custom/2.0/posts/');
+
+    // WP API returns full content in custom envelope: {posts: [{content: "..."}]}
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        total: 1,
+        per_page: 30,
+        posts: [
+          {
+            title: 'Full Article via Custom WP Endpoint',
+            content: '<p>' + 'Full article content. '.repeat(50) + '</p>',
+            date_gmt: '2024-06-01T08:00:00',
+          },
+        ],
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full Article via Custom WP Endpoint');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    // Verify the constructed API URL uses the config path + slug
+    const apiCall = vi.mocked(httpRequest).mock.calls[1][0];
+    expect(apiCall).toContain('/wp-json/custom/2.0/posts/my-article-slug');
+  });
+
+  it('uses config useWpRestApi to skip HTML and go direct to WP API', async () => {
+    const url = 'https://example-wp-site.com/2025/08/15/test-article/';
+
+    // Config enables WP REST API fast path (skips HTML fetch entirely)
+    vi.mocked(siteUseWpRestApi).mockReturnValueOnce(true);
+
+    // WP API returns full content directly (first and only httpRequest call)
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify([
+        {
+          title: { rendered: 'Full WP Article' },
+          content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
+          excerpt: { rendered: '<p>Excerpt</p>' },
+          date_gmt: '2025-08-15T10:00:00',
+          _embedded: { author: [{ name: 'Test Author' }] },
+        },
+      ]),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full WP Article');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    // Verify the constructed API URL uses standard WP path + slug
+    const apiCall = vi.mocked(httpRequest).mock.calls[0][0];
+    expect(apiCall).toContain('/wp-json/wp/v2/posts?slug=test-article');
+  });
+});
