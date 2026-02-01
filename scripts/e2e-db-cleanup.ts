@@ -21,7 +21,7 @@ interface ParsedArgs {
   yes?: boolean;
 }
 
-function parseArgs(): ParsedArgs {
+export function parseArgs(): ParsedArgs {
   const args: ParsedArgs = {};
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === '--before' && i + 1 < process.argv.length) {
@@ -35,7 +35,7 @@ function parseArgs(): ParsedArgs {
   return args;
 }
 
-function parseDateString(dateStr: string): Date {
+export function parseDateString(dateStr: string): Date {
   // Try ISO format
   const isoMatch = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
   if (isoMatch) {
@@ -63,7 +63,7 @@ function parseDateString(dateStr: string): Date {
   throw new Error(`Invalid date format: ${dateStr}`);
 }
 
-async function askForConfirmation(message: string): Promise<boolean> {
+export async function askForConfirmation(message: string): Promise<boolean> {
   return new Promise((resolve) => {
     const rl = createInterface({
       input: process.stdin,
@@ -77,7 +77,7 @@ async function askForConfirmation(message: string): Promise<boolean> {
   });
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs();
 
   // Validate arguments
@@ -156,4 +156,6 @@ async function main() {
   }
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

@@ -1,8 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import * as fs from 'fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
-import Database from 'better-sqlite3';
-import { gzipSync } from 'zlib';
+import * as fs from 'fs';
 import {
   initializeDatabase,
   recordTestResult,
@@ -44,17 +42,13 @@ describe('db-recorder', () => {
 
       // Check e2e_runs table exists
       const tables = db
-        .prepare(
-          `SELECT name FROM sqlite_master WHERE type='table' AND name='e2e_runs'`
-        )
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='e2e_runs'`)
         .all();
       expect(tables).toHaveLength(1);
 
       // Check antibot_detections table exists
       const antibotTables = db
-        .prepare(
-          `SELECT name FROM sqlite_master WHERE type='table' AND name='antibot_detections'`
-        )
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='antibot_detections'`)
         .all();
       expect(antibotTables).toHaveLength(1);
     });
@@ -72,9 +66,7 @@ describe('db-recorder', () => {
       }
 
       const tables = db
-        .prepare(
-          `SELECT name FROM sqlite_master WHERE type='table' AND name='e2e_runs'`
-        )
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='e2e_runs'`)
         .all();
       expect(tables).toHaveLength(1);
     });
@@ -90,9 +82,7 @@ describe('db-recorder', () => {
 
       // Check indexes on e2e_runs
       const indexes = db
-        .prepare(
-          `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='e2e_runs'`
-        )
+        .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='e2e_runs'`)
         .all();
       expect(indexes.length).toBeGreaterThanOrEqual(3);
 
@@ -272,7 +262,6 @@ describe('db-recorder', () => {
 
         // Verify it's actually gzipped
         if (row.raw_html_compressed) {
-          const decompressed = Buffer.from(row.raw_html_compressed).toString('utf-8', 0, 2);
           // Gzip magic number is 1f 8b
           expect(row.raw_html_compressed[0]).toBe(0x1f);
           expect(row.raw_html_compressed[1]).toBe(0x8b);
@@ -392,7 +381,7 @@ describe('db-recorder', () => {
   describe('closeDatabase', () => {
     it('should close database connection', () => {
       initializeDatabase();
-      const dbBefore = getDatabase();
+      getDatabase();
 
       closeDatabase();
       const dbAfter = getDatabase();
