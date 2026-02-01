@@ -25,9 +25,10 @@ const BROWSER_RETRY_ERRORS = new Set<ValidationError>(['challenge_detected', 'ac
 function failResult(
   url: string,
   startTime: number,
-  fields: Omit<FetchResult, 'success' | 'url' | 'latencyMs'>
+  fields: Omit<FetchResult, 'success' | 'url' | 'latencyMs'>,
+  statusCode?: number
 ): FetchResult {
-  return { success: false, url, latencyMs: Date.now() - startTime, ...fields };
+  return { success: false, url, latencyMs: Date.now() - startTime, statusCode: statusCode ?? null, rawHtml: null, extractionMethod: null, ...fields };
 }
 
 /**
@@ -92,7 +93,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
           suggestedAction: 'wait_and_retry',
           hint: 'Too many requests, wait before retrying',
           antibot: antibotField,
-        });
+        }, response.statusCode);
       }
 
       // Let high-confidence antibot detection override the default suggested action
@@ -105,7 +106,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
         suggestedAction: actionable ? mapAction(actionable.suggestedAction) : defaultAction,
         hint: response.statusCode === 403 ? 'Site may require browser rendering' : undefined,
         antibot: antibotField,
-      });
+      }, response.statusCode);
     }
 
     // Validate content
@@ -124,7 +125,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
           : 'skip',
         hint: VALIDATION_ERROR_HINTS[validation.error!],
         antibot: antibotField,
-      });
+      }, response.statusCode);
     }
 
     // Extract content
@@ -137,7 +138,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
         suggestedAction: 'retry_with_extract',
         hint: 'Failed to parse HTML',
         antibot: antibotField,
-      });
+      }, response.statusCode);
     }
 
     // Handle insufficient extracted content
@@ -149,7 +150,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
         suggestedAction: 'retry_with_extract',
         hint: 'Extracted content too short',
         antibot: antibotField,
-      });
+      }, response.statusCode);
     }
 
     const latencyMs = Date.now() - startTime;
@@ -168,6 +169,9 @@ export async function httpFetch(url: string): Promise<FetchResult> {
       publishedTime: extracted.publishedTime ?? undefined,
       lang: extracted.lang ?? undefined,
       antibot: antibotField,
+      statusCode: response.statusCode,
+      rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+      extractionMethod: extracted.method ?? null,
     };
   } catch (error) {
     logger.error({ url, error: String(error) }, 'HTTP fetch failed');
