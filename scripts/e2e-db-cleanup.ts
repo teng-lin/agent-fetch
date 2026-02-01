@@ -2,18 +2,21 @@
  * Clean up old E2E database records
  *
  * Usage:
- *   npx tsx scripts/e2e-db-cleanup.ts --before "2025-01-15"
+ *   npx tsx scripts/e2e-db-cleanup.ts --before "2026-01-25"
  *   npx tsx scripts/e2e-db-cleanup.ts --before "30d"
  *   npx tsx scripts/e2e-db-cleanup.ts --all
  *   npx tsx scripts/e2e-db-cleanup.ts --before "7d" --yes  # Skip confirmation
  */
 
-import Database from 'better-sqlite3';
-import { createInterface } from 'node:readline';
+import initSqlJs from 'sql.js';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import * as readline from 'node:readline';
 
-const DB_PATH = path.resolve(process.cwd(), 'lynxget-e2e.db');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '../');
+const DB_PATH = path.join(PROJECT_ROOT, 'lynxget-e2e.db');
 
 interface ParsedArgs {
   before?: string;
@@ -21,7 +24,7 @@ interface ParsedArgs {
   yes?: boolean;
 }
 
-export function parseArgs(): ParsedArgs {
+function parseArgs(): ParsedArgs {
   const args: ParsedArgs = {};
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === '--before' && i + 1 < process.argv.length) {
@@ -35,8 +38,8 @@ export function parseArgs(): ParsedArgs {
   return args;
 }
 
-export function parseDateString(dateStr: string): Date {
-  // Try ISO format
+function parseDateString(dateStr: string): Date {
+  // Try ISO format: YYYY-MM-DD
   const isoMatch = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
   if (isoMatch) {
     return new Date(dateStr + 'T00:00:00Z');
@@ -60,12 +63,14 @@ export function parseDateString(dateStr: string): Date {
     return now;
   }
 
-  throw new Error(`Invalid date format: ${dateStr}`);
+  throw new Error(
+    `Invalid date format: ${dateStr}. Use ISO format (2026-01-25) or relative (30d, 24h, 5m)`
+  );
 }
 
-export async function askForConfirmation(message: string): Promise<boolean> {
+async function askForConfirmation(message: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const rl = createInterface({
+    const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
     });
@@ -77,23 +82,26 @@ export async function askForConfirmation(message: string): Promise<boolean> {
   });
 }
 
-export async function main() {
+async function main() {
   const args = parseArgs();
 
   // Validate arguments
   if (!args.before && !args.all) {
-    console.error('Usage: e2e-db-cleanup --before "2025-01-15" | --all [--yes]');
+    console.error('Usage: npx tsx scripts/e2e-db-cleanup.ts --before "2026-01-25" | --all [--yes]');
     process.exit(1);
   }
 
-  if (!fs.existsSync(DB_PATH)) {
+  if (!existsSync(DB_PATH)) {
     console.log('Database not found. Nothing to clean up.');
     process.exit(0);
   }
 
-  const db = new Database(DB_PATH);
-
   try {
+    // Initialize sql.js
+    const sqlJs = await initSqlJs();
+    const buffer = readFileSync(DB_PATH);
+    const db = new sqlJs.Database(buffer);
+
     // Build WHERE clause
     let whereClause = '';
     let params: unknown[] = [];
@@ -106,29 +114,30 @@ export async function main() {
       params = [beforeDate.toISOString()];
     }
 
-    // Dry run: count records that will be deleted
+    // Count records that will be deleted
     const countQuery = `
       SELECT
-        (SELECT COUNT(*) FROM e2e_runs ${whereClause}) as run_count,
-        (SELECT COUNT(*) FROM antibot_detections WHERE run_id IN (
-          SELECT id FROM e2e_runs ${whereClause}
-        )) as detection_count
+        (SELECT COUNT(*) FROM e2e_runs ${whereClause}) as run_count
     `;
 
-    const countResult = db.prepare(countQuery).get(...params) as {
-      run_count: number;
-      detection_count: number;
-    };
+    const countStmt = db.prepare(countQuery);
+    if (params.length > 0) {
+      countStmt.bind(params);
+    }
+    countStmt.step();
+    const countRow = countStmt.getAsObject() as { run_count: number };
+    countStmt.free();
 
-    if (countResult.run_count === 0) {
+    const runCount = countRow.run_count || 0;
+
+    if (runCount === 0) {
       console.log('No records to delete.');
       db.close();
       process.exit(0);
     }
 
     console.log(`\n📊 Dry run: Would delete:`);
-    console.log(`  - ${countResult.run_count} E2E runs`);
-    console.log(`  - ${countResult.detection_count} antibot detections`);
+    console.log(`  - ${runCount} E2E runs`);
     console.log('');
 
     // Ask for confirmation
@@ -143,19 +152,23 @@ export async function main() {
 
     // Delete records
     const deleteQuery = `DELETE FROM e2e_runs ${whereClause}`;
-    db.prepare(deleteQuery).run(...params);
+    db.run(deleteQuery, params);
 
-    console.log(
-      `\n✅ Deleted ${countResult.run_count} runs and ${countResult.detection_count} detections`
-    );
+    console.log(`\n✅ Deleted ${runCount} E2E runs`);
+
+    // Save database to disk
+    const data = db.export();
+    const dbBuffer = Buffer.from(data);
+    writeFileSync(DB_PATH, dbBuffer);
+
     db.close();
   } catch (error) {
     console.error('Error:', error);
-    db.close();
     process.exit(1);
   }
 }
 
+// Only run main if this is the main module being executed
 if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }

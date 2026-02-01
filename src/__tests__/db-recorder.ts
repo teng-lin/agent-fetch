@@ -201,10 +201,13 @@ export function startTestRun(runType: string = 'fetch'): string {
   const gitCommit = getGitCommit();
   const startedAt = new Date().toISOString();
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO test_runs (run_id, git_commit, run_type, started_at)
     VALUES (?, ?, ?, ?)
-  `, [runId, gitCommit, runType, startedAt]);
+  `,
+    [runId, gitCommit, runType, startedAt]
+  );
 
   currentRunId = runId;
   saveDatabaseToDisk();
@@ -221,11 +224,14 @@ export function endTestRun(totalTests: number, passedTests: number, failedTests:
 
   const endedAt = new Date().toISOString();
 
-  db.run(`
+  db.run(
+    `
     UPDATE test_runs
     SET ended_at = ?, total_tests = ?, passed_tests = ?, failed_tests = ?
     WHERE run_id = ?
-  `, [endedAt, totalTests, passedTests, failedTests, currentRunId]);
+  `,
+    [endedAt, totalTests, passedTests, failedTests, currentRunId]
+  );
 
   saveDatabaseToDisk();
   currentRunId = null;
@@ -240,26 +246,23 @@ function getOrCreateUrlTarget(site: string, url: string, minWordCount: number): 
   }
 
   // Try to get existing
-  const result = db.exec(
-    'SELECT id FROM url_targets WHERE url = ?',
-    [url]
-  );
+  const result = db.exec('SELECT id FROM url_targets WHERE url = ?', [url]);
 
   if (result.length > 0 && result[0].values.length > 0) {
     return result[0].values[0][0] as number;
   }
 
   // Create new
-  db.run(`
+  db.run(
+    `
     INSERT OR IGNORE INTO url_targets (site, url, min_word_count)
     VALUES (?, ?, ?)
-  `, [site, url, minWordCount]);
+  `,
+    [site, url, minWordCount]
+  );
 
   // Get the ID
-  const selectResult = db.exec(
-    'SELECT id FROM url_targets WHERE url = ?',
-    [url]
-  );
+  const selectResult = db.exec('SELECT id FROM url_targets WHERE url = ?', [url]);
 
   if (selectResult.length > 0 && selectResult[0].values.length > 0) {
     return selectResult[0].values[0][0] as number;
@@ -313,10 +316,10 @@ function extractPublishDate(result: FetchResult): string | null {
  */
 function extractWordCount(result: FetchResult): number | null {
   if (result.textContent) {
-    return result.textContent.split(/\s+/).filter(w => w.length > 0).length;
+    return result.textContent.split(/\s+/).filter((w) => w.length > 0).length;
   }
   if (result.content) {
-    return result.content.split(/\s+/).filter(w => w.length > 0).length;
+    return result.content.split(/\s+/).filter((w) => w.length > 0).length;
   }
   return null;
 }
@@ -372,7 +375,8 @@ export function recordTestResult(
     }
 
     // Insert main result
-    db.run(`
+    db.run(
+      `
       INSERT INTO e2e_runs (
         run_id,
         url_target_id,
@@ -393,26 +397,28 @@ export function recordTestResult(
         raw_html_compressed,
         timestamp
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      currentRunId,
-      urlTargetId,
-      site,
-      result.url,
-      result.success ? 1 : 0,
-      wordCount,
-      result.latencyMs ?? null,
-      statusCode,
-      result.extractionMethod || null,
-      result.title || null,
-      author,
-      body,
-      publishDate,
-      result.lang || null,
-      result.error || null,
-      result.errorDetails?.type || null,
-      compressedHtml,
-      timestamp
-    ]);
+    `,
+      [
+        currentRunId,
+        urlTargetId,
+        site,
+        result.url,
+        result.success ? 1 : 0,
+        wordCount,
+        result.latencyMs ?? null,
+        statusCode,
+        result.extractionMethod || null,
+        result.title || null,
+        author,
+        body,
+        publishDate,
+        result.lang || null,
+        result.error || null,
+        result.errorDetails?.type || null,
+        compressedHtml,
+        timestamp,
+      ]
+    );
 
     // Get the last inserted row ID
     const lastIdResult = db.exec('SELECT last_insert_rowid() as id');
@@ -421,7 +427,8 @@ export function recordTestResult(
     // Insert antibot detections if present
     if (result.antibot && result.antibot.length > 0 && typeof runResultId === 'number') {
       for (const detection of result.antibot) {
-        db.run(`
+        db.run(
+          `
           INSERT INTO antibot_detections (
             run_id,
             provider,
@@ -432,16 +439,18 @@ export function recordTestResult(
             suggested_action,
             timestamp
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          runResultId,
-          detection.provider,
-          detection.name,
-          detection.category,
-          detection.confidence,
-          JSON.stringify(detection.evidence),
-          detection.suggestedAction,
-          timestamp
-        ]);
+        `,
+          [
+            runResultId,
+            detection.provider,
+            detection.name,
+            detection.category,
+            detection.confidence,
+            JSON.stringify(detection.evidence),
+            detection.suggestedAction,
+            timestamp,
+          ]
+        );
       }
     }
 

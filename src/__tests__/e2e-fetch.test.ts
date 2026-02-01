@@ -85,7 +85,7 @@ describe('E2E Fetch Tests', () => {
     console.log('');
 
     // Start a new test run
-    const runId = startTestRun('fetch');
+    startTestRun('fetch');
     let passCount = 0;
     let failCount = 0;
 
