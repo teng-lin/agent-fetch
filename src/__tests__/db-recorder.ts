@@ -2,10 +2,11 @@
  * Database recorder module for E2E tests
  *
  * Records test results to SQLite with:
- * - Fetch results (status, latency, extraction method)
+ * - Test run tracking (one per execution)
+ * - URL target configuration (min word count per URL)
+ * - Individual fetch results linked to test runs
  * - Antibot detections (provider, confidence, evidence)
  * - Optional HTML compression (RECORD_HTML=true)
- * - Git commit tracking for reproducibility
  *
  * Uses sql.js (pure JavaScript SQLite) for cross-platform compatibility
  */
@@ -25,6 +26,7 @@ let dbPath: string = path.join(PROJECT_ROOT, 'lynxget-e2e.db');
 let db: SqlJsDatabase | null = null;
 let sqlJs: any = null;
 let cachedGitCommit: string | null = null;
+let currentRunId: string | null = null;
 
 /**
  * Set database path (for testing)
@@ -58,6 +60,13 @@ function getGitCommit(): string {
 }
 
 /**
+ * Generate a unique run ID (UUID-like string)
+ */
+function generateRunId(): string {
+  return `run-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
  * Initialize database connection and create tables if needed
  * Idempotent - safe to call multiple times
  */
@@ -78,15 +87,53 @@ export async function initializeDatabase(): Promise<void> {
       db = new sqlJs.Database();
     }
 
-    // Create e2e_runs table
+    // Create url_targets table (static configuration)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS url_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        site TEXT NOT NULL,
+        url TEXT NOT NULL UNIQUE,
+        min_word_count INTEGER NOT NULL DEFAULT 200,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_url_targets_site
+        ON url_targets(site);
+      CREATE INDEX IF NOT EXISTS idx_url_targets_url
+        ON url_targets(url);
+    `);
+
+    // Create test_runs table (one per test execution)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS test_runs (
+        run_id TEXT PRIMARY KEY,
+        git_commit TEXT NOT NULL,
+        run_type TEXT NOT NULL DEFAULT 'fetch',
+        started_at DATETIME NOT NULL,
+        ended_at DATETIME,
+        total_tests INTEGER,
+        passed_tests INTEGER,
+        failed_tests INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_test_runs_git_commit
+        ON test_runs(git_commit);
+      CREATE INDEX IF NOT EXISTS idx_test_runs_started_at
+        ON test_runs(started_at);
+    `);
+
+    // Create e2e_runs table (individual test results)
     db.run(`
       CREATE TABLE IF NOT EXISTS e2e_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        git_commit TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        url_target_id INTEGER,
         site TEXT NOT NULL,
-        run_type TEXT NOT NULL DEFAULT 'fetch',
         url TEXT NOT NULL,
         success INTEGER NOT NULL,
+        word_count INTEGER,
         latency_ms INTEGER,
         status_code INTEGER,
         extraction_method TEXT,
@@ -99,11 +146,15 @@ export async function initializeDatabase(): Promise<void> {
         error_type TEXT,
         raw_html_compressed BLOB,
         timestamp DATETIME NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (run_id) REFERENCES test_runs(run_id),
+        FOREIGN KEY (url_target_id) REFERENCES url_targets(id)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_e2e_runs_git_commit
-        ON e2e_runs(git_commit);
+      CREATE INDEX IF NOT EXISTS idx_e2e_runs_run_id
+        ON e2e_runs(run_id);
+      CREATE INDEX IF NOT EXISTS idx_e2e_runs_url_target_id
+        ON e2e_runs(url_target_id);
       CREATE INDEX IF NOT EXISTS idx_e2e_runs_site
         ON e2e_runs(site);
       CREATE INDEX IF NOT EXISTS idx_e2e_runs_timestamp
@@ -139,17 +190,82 @@ export async function initializeDatabase(): Promise<void> {
 }
 
 /**
- * Save the current database to disk
+ * Start a new test run and return the run ID
  */
-function saveDatabaseToDisk(): void {
-  if (!db) return;
-  try {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    writeFileSync(dbPath, buffer);
-  } catch (err) {
-    console.warn('Failed to save database to disk:', err);
+export function startTestRun(runType: string = 'fetch'): string {
+  if (!db) {
+    throw new Error('Database not initialized');
   }
+
+  const runId = generateRunId();
+  const gitCommit = getGitCommit();
+  const startedAt = new Date().toISOString();
+
+  db.run(`
+    INSERT INTO test_runs (run_id, git_commit, run_type, started_at)
+    VALUES (?, ?, ?, ?)
+  `, [runId, gitCommit, runType, startedAt]);
+
+  currentRunId = runId;
+  saveDatabaseToDisk();
+  return runId;
+}
+
+/**
+ * End the current test run with final statistics
+ */
+export function endTestRun(totalTests: number, passedTests: number, failedTests: number): void {
+  if (!db || !currentRunId) {
+    return;
+  }
+
+  const endedAt = new Date().toISOString();
+
+  db.run(`
+    UPDATE test_runs
+    SET ended_at = ?, total_tests = ?, passed_tests = ?, failed_tests = ?
+    WHERE run_id = ?
+  `, [endedAt, totalTests, passedTests, failedTests, currentRunId]);
+
+  saveDatabaseToDisk();
+  currentRunId = null;
+}
+
+/**
+ * Get or create URL target
+ */
+function getOrCreateUrlTarget(site: string, url: string, minWordCount: number): number {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+
+  // Try to get existing
+  const result = db.exec(
+    'SELECT id FROM url_targets WHERE url = ?',
+    [url]
+  );
+
+  if (result.length > 0 && result[0].values.length > 0) {
+    return result[0].values[0][0] as number;
+  }
+
+  // Create new
+  db.run(`
+    INSERT OR IGNORE INTO url_targets (site, url, min_word_count)
+    VALUES (?, ?, ?)
+  `, [site, url, minWordCount]);
+
+  // Get the ID
+  const selectResult = db.exec(
+    'SELECT id FROM url_targets WHERE url = ?',
+    [url]
+  );
+
+  if (selectResult.length > 0 && selectResult[0].values.length > 0) {
+    return selectResult[0].values[0][0] as number;
+  }
+
+  throw new Error(`Failed to get or create url_target for ${url}`);
 }
 
 /**
@@ -193,19 +309,36 @@ function extractPublishDate(result: FetchResult): string | null {
 }
 
 /**
+ * Extract word count from result
+ */
+function extractWordCount(result: FetchResult): number | null {
+  if (result.textContent) {
+    return result.textContent.split(/\s+/).filter(w => w.length > 0).length;
+  }
+  if (result.content) {
+    return result.content.split(/\s+/).filter(w => w.length > 0).length;
+  }
+  return null;
+}
+
+/**
  * Record a test result to the database
  *
  * @param site - Site identifier (e.g., 'bbc', 'nytimes')
  * @param result - FetchResult from the test
+ * @param minWordCount - Minimum expected word count for this URL
  */
-export function recordTestResult(site: string, result: FetchResult): void {
+export function recordTestResult(
+  site: string,
+  result: FetchResult,
+  minWordCount: number = 200
+): void {
   if (!db) {
-    // Reload database or initialize if needed
     reloadOrInitializeDatabase();
   }
 
-  if (!db) {
-    return; // Silent failure if db still not initialized
+  if (!db || !currentRunId) {
+    return; // Silent failure if db still not initialized or no active run
   }
 
   try {
@@ -217,13 +350,15 @@ export function recordTestResult(site: string, result: FetchResult): void {
       return;
     }
 
-    const gitCommit = getGitCommit();
     const timestamp = new Date().toISOString();
     const statusCode = extractStatusCode(result);
     const body = extractBody(result);
     const author = extractAuthor(result);
     const publishDate = extractPublishDate(result);
-    const runType = 'fetch'; // E2E fetch tests are always 'fetch' type
+    const wordCount = extractWordCount(result);
+
+    // Get or create URL target
+    const urlTargetId = getOrCreateUrlTarget(site, result.url, minWordCount);
 
     // Compress HTML if enabled
     let compressedHtml: Uint8Array | null = null;
@@ -239,11 +374,12 @@ export function recordTestResult(site: string, result: FetchResult): void {
     // Insert main result
     db.run(`
       INSERT INTO e2e_runs (
-        git_commit,
+        run_id,
+        url_target_id,
         site,
-        run_type,
         url,
         success,
+        word_count,
         latency_ms,
         status_code,
         extraction_method,
@@ -256,13 +392,14 @@ export function recordTestResult(site: string, result: FetchResult): void {
         error_type,
         raw_html_compressed,
         timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      gitCommit,
+      currentRunId,
+      urlTargetId,
       site,
-      runType,
       result.url,
       result.success ? 1 : 0,
+      wordCount,
       result.latencyMs ?? null,
       statusCode,
       result.extractionMethod || null,
@@ -279,10 +416,10 @@ export function recordTestResult(site: string, result: FetchResult): void {
 
     // Get the last inserted row ID
     const lastIdResult = db.exec('SELECT last_insert_rowid() as id');
-    const runId = lastIdResult[0]?.values[0]?.[0];
+    const runResultId = lastIdResult[0]?.values[0]?.[0];
 
     // Insert antibot detections if present
-    if (result.antibot && result.antibot.length > 0 && typeof runId === 'number') {
+    if (result.antibot && result.antibot.length > 0 && typeof runResultId === 'number') {
       for (const detection of result.antibot) {
         db.run(`
           INSERT INTO antibot_detections (
@@ -296,7 +433,7 @@ export function recordTestResult(site: string, result: FetchResult): void {
             timestamp
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `, [
-          runId,
+          runResultId,
           detection.provider,
           detection.name,
           detection.category,
@@ -313,6 +450,20 @@ export function recordTestResult(site: string, result: FetchResult): void {
   } catch (err) {
     console.warn('Failed to record test result to database:', err);
     // Don't throw - let tests continue even if recording fails
+  }
+}
+
+/**
+ * Save the current database to disk
+ */
+function saveDatabaseToDisk(): void {
+  if (!db) return;
+  try {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    writeFileSync(dbPath, buffer);
+  } catch (err) {
+    console.warn('Failed to save database to disk:', err);
   }
 }
 
@@ -365,4 +516,11 @@ export function getDatabase(): SqlJsDatabase | null {
  */
 export function getDatabasePath(): string {
   return dbPath;
+}
+
+/**
+ * Get current run ID
+ */
+export function getCurrentRunId(): string | null {
+  return currentRunId;
 }

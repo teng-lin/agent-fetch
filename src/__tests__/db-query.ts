@@ -296,14 +296,14 @@ export async function getOverallStats(): Promise<OverallStats> {
   try {
     const query = `
       SELECT
-        COUNT(*) as totalRuns,
+        COUNT(*) as totalResults,
         SUM(success) as successfulRuns,
         SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failedRuns,
         COUNT(DISTINCT site) as uniqueSites,
-        COUNT(DISTINCT git_commit) as uniqueCommits,
-        MIN(timestamp) as earliest,
-        MAX(timestamp) as latest
-      FROM e2e_runs
+        (SELECT COUNT(DISTINCT git_commit) FROM test_runs) as uniqueCommits,
+        MIN(r.timestamp) as earliest,
+        MAX(r.timestamp) as latest
+      FROM e2e_runs r
     `;
 
     const results = db.exec(query);
@@ -325,7 +325,7 @@ export async function getOverallStats(): Promise<OverallStats> {
     const columns = results[0].columns;
     const row = results[0].values[0];
 
-    const totalRuns = (row[columns.indexOf('totalRuns')] as number) || 0;
+    const totalRuns = (row[columns.indexOf('totalResults')] as number) || 0;
     const successfulRuns = (row[columns.indexOf('successfulRuns')] as number) || 0;
     const failedRuns = (row[columns.indexOf('failedRuns')] as number) || 0;
     const uniqueSites = (row[columns.indexOf('uniqueSites')] as number) || 0;
