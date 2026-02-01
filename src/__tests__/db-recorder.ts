@@ -72,6 +72,7 @@ export function initializeDatabase(): void {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         git_commit TEXT NOT NULL,
         site TEXT NOT NULL,
+        run_type TEXT NOT NULL DEFAULT 'fetch',
         url TEXT NOT NULL,
         success INTEGER NOT NULL,
         latency_ms INTEGER,
@@ -193,6 +194,7 @@ export function recordTestResult(site: string, result: FetchResult): void {
     const body = extractBody(result);
     const author = extractAuthor(result);
     const publishDate = extractPublishDate(result);
+    const runType = 'fetch'; // E2E fetch tests are always 'fetch' type
 
     // Compress HTML if enabled
     let compressedHtml: Buffer | null = null;
@@ -209,6 +211,7 @@ export function recordTestResult(site: string, result: FetchResult): void {
       INSERT INTO e2e_runs (
         git_commit,
         site,
+        run_type,
         url,
         success,
         latency_ms,
@@ -223,12 +226,13 @@ export function recordTestResult(site: string, result: FetchResult): void {
         error_type,
         raw_html_compressed,
         timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const info = insertStmt.run(
       gitCommit,
       site,
+      runType,
       result.url,
       result.success ? 1 : 0,
       result.latencyMs,

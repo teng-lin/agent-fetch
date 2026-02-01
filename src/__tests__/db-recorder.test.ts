@@ -135,6 +135,7 @@ describe('db-recorder', () => {
         const row: any = rows[0];
         expect(row.success).toBe(1);
         expect(row.site).toBe('example');
+        expect(row.run_type).toBe('fetch');
         expect(row.url).toBe('https://example.com');
         expect(row.latency_ms).toBe(150);
         expect(row.status_code).toBe(200);
@@ -170,6 +171,7 @@ describe('db-recorder', () => {
         const row: any = rows[0];
         expect(row.success).toBe(0);
         expect(row.site).toBe('blocked');
+        expect(row.run_type).toBe('fetch');
         expect(row.status_code).toBe(403);
         expect(row.error_message).toBe('Blocked by Cloudflare');
         expect(row.error_type).toBe('challenge_detected');
@@ -191,6 +193,7 @@ describe('db-recorder', () => {
       const db = getDatabase();
       if (db) {
         const row: any = db.prepare('SELECT * FROM e2e_runs').get();
+        expect(row.run_type).toBe('fetch');
         expect(row.body).toBe('Article content');
         expect(row.author).toBe('Jane Smith');
         expect(row.publish_date).toBe('2024-02-01T10:00:00Z');
@@ -230,8 +233,9 @@ describe('db-recorder', () => {
       const db = getDatabase();
       if (db) {
         // Check main result was recorded
-        const runs = db.prepare('SELECT id FROM e2e_runs').all();
+        const runs = db.prepare('SELECT * FROM e2e_runs').all();
         expect(runs).toHaveLength(1);
+        expect(runs[0].run_type).toBe('fetch');
 
         // Check detections were recorded
         const detectionRows = db.prepare('SELECT * FROM antibot_detections').all();
@@ -262,7 +266,8 @@ describe('db-recorder', () => {
 
       const db = getDatabase();
       if (db) {
-        const row: any = db.prepare('SELECT raw_html_compressed FROM e2e_runs').get();
+        const row: any = db.prepare('SELECT * FROM e2e_runs').get();
+        expect(row.run_type).toBe('fetch');
         expect(row.raw_html_compressed).not.toBeNull();
 
         // Verify it's actually gzipped
@@ -324,6 +329,7 @@ describe('db-recorder', () => {
       const db = getDatabase();
       if (db) {
         const row: any = db.prepare('SELECT * FROM e2e_runs').get();
+        expect(row.run_type).toBe('fetch');
         expect(row.title).toBeNull();
         expect(row.author).toBeNull();
         expect(row.body).toBeNull();
@@ -343,7 +349,8 @@ describe('db-recorder', () => {
 
       const db = getDatabase();
       if (db) {
-        const row: any = db.prepare('SELECT status_code FROM e2e_runs').get();
+        const row: any = db.prepare('SELECT * FROM e2e_runs').get();
+        expect(row.run_type).toBe('fetch');
         expect(row.status_code).toBe(200);
       }
     });
@@ -362,7 +369,8 @@ describe('db-recorder', () => {
 
       const db = getDatabase();
       if (db) {
-        const row: any = db.prepare('SELECT status_code FROM e2e_runs').get();
+        const row: any = db.prepare('SELECT * FROM e2e_runs').get();
+        expect(row.run_type).toBe('fetch');
         expect(row.status_code).toBe(429);
       }
     });
