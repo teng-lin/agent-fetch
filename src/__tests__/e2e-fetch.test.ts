@@ -16,6 +16,7 @@ import { httpFetch } from '../fetch/http-fetch.js';
 import type { SiteTestConfig } from './fixtures/types.js';
 import type { FetchResult } from '../fetch/types.js';
 import { loadFixtures, runWithConcurrency, filterTestCases, wordCount } from './e2e-helpers.js';
+import { recordTestResult } from './db-recorder.js';
 
 const TEST_CONCURRENCY = parseInt(process.env.TEST_CONCURRENCY || '5', 10);
 const TEST_SET = process.env.TEST_SET || 'stable';
@@ -92,6 +93,7 @@ describe('E2E Fetch Tests', () => {
 
       try {
         const result = await runFetch(tc.url);
+        recordTestResult(tc.site, result);
         const words = wordCount(result.textContent);
         console.log(`${tc.site}: ${result.success ? 'OK' : 'FAIL'} - ${words} words`);
 
