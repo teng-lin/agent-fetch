@@ -84,9 +84,9 @@ function formatDate(dateStr: string | null): string {
   return date.toLocaleString();
 }
 
-function formatStats(): void {
+async function formatStats(): Promise<void> {
   try {
-    const stats = getOverallStats();
+    const stats = await getOverallStats();
 
     console.log('\n📊 Overall Statistics\n');
     console.log(`  Total Runs:      ${stats.totalRuns}`);
@@ -101,7 +101,7 @@ function formatStats(): void {
 
     // Success rate by site
     console.log('\n📍 Success Rate by Site\n');
-    const bySite = getSuccessRateBySite();
+    const bySite = await getSuccessRateBySite();
 
     if (bySite.length === 0) {
       console.log('  No data available');
@@ -125,9 +125,9 @@ function formatStats(): void {
   }
 }
 
-function formatBySite(site: string): void {
+async function formatBySite(site: string): Promise<void> {
   try {
-    const runs = getRunsBySite(site);
+    const runs = await getRunsBySite(site);
 
     if (runs.length === 0) {
       console.log(`\n  No runs found for site: ${site}\n`);
@@ -168,9 +168,9 @@ function formatBySite(site: string): void {
   }
 }
 
-function formatByCommit(commit: string): void {
+async function formatByCommit(commit: string): Promise<void> {
   try {
-    const runs = getRunsByCommit(commit);
+    const runs = await getRunsByCommit(commit);
 
     if (runs.length === 0) {
       console.log(`\n  No runs found for commit: ${commit}\n`);
@@ -212,9 +212,9 @@ function formatByCommit(commit: string): void {
   }
 }
 
-function formatFailed(): void {
+async function formatFailed(): Promise<void> {
   try {
-    const runs = getFailedRuns();
+    const runs = await getFailedRuns();
 
     if (runs.length === 0) {
       console.log('\n  No failed runs found.\n');
@@ -245,9 +245,9 @@ function formatFailed(): void {
   }
 }
 
-function formatSince(dateStr: string): void {
+async function formatSince(dateStr: string): Promise<void> {
   try {
-    const runs = getRunsSince(dateStr);
+    const runs = await getRunsSince(dateStr);
 
     if (runs.length === 0) {
       console.log(`\n  No runs found since ${dateStr}\n`);
@@ -290,7 +290,7 @@ function formatSince(dateStr: string): void {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs();
 
   // Show help if requested or no arguments
@@ -300,16 +300,19 @@ function main(): void {
   }
 
   if (args.stats) {
-    formatStats();
+    await formatStats();
   } else if (args.site) {
-    formatBySite(args.site);
+    await formatBySite(args.site);
   } else if (args.commit) {
-    formatByCommit(args.commit);
+    await formatByCommit(args.commit);
   } else if (args.failed) {
-    formatFailed();
+    await formatFailed();
   } else if (args.since) {
-    formatSince(args.since);
+    await formatSince(args.since);
   }
 }
 
-main();
+main().catch((err) => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});

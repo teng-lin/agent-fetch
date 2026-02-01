@@ -7,15 +7,41 @@
  * - Failed runs
  * - Runs since a date
  * - Overall statistics
+ *
+ * Uses sql.js (pure JavaScript SQLite) for cross-platform compatibility
  */
 
-import Database from 'better-sqlite3';
+import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../../');
 const DB_PATH = path.join(PROJECT_ROOT, 'lynxget-e2e.db');
+
+let sqlJsInstance: any = null;
+
+/**
+ * Load database from disk using sql.js
+ */
+async function loadDatabase(): Promise<SqlJsDatabase | null> {
+  try {
+    if (!sqlJsInstance) {
+      sqlJsInstance = await initSqlJs();
+    }
+
+    if (!existsSync(DB_PATH)) {
+      return null;
+    }
+
+    const buffer = readFileSync(DB_PATH);
+    return new sqlJsInstance.Database(buffer);
+  } catch (err) {
+    console.error('Failed to load database:', err);
+    return null;
+  }
+}
 
 interface SuccessRateBySite {
   site: string;
@@ -63,8 +89,12 @@ interface OverallStats {
  * Get success rate by site with counts
  * Returns percentage success per site and total run count
  */
-export function getSuccessRateBySite(): SuccessRateBySite[] {
-  const db = new Database(DB_PATH, { readonly: true });
+export async function getSuccessRateBySite(): Promise<SuccessRateBySite[]> {
+  const db = await loadDatabase();
+
+  if (!db) {
+    return [];
+  }
 
   try {
     const query = `
@@ -79,20 +109,18 @@ export function getSuccessRateBySite(): SuccessRateBySite[] {
       ORDER BY successRate DESC, total DESC
     `;
 
-    const results = db.prepare(query).all() as Array<{
-      site: string;
-      total: number;
-      success: number;
-      failed: number;
-      successRate: number;
-    }>;
+    const results = db.exec(query);
+    if (!results.length) {
+      return [];
+    }
 
-    return results.map((r) => ({
-      site: r.site,
-      total: r.total,
-      success: r.success,
-      failed: r.failed,
-      successRate: r.successRate,
+    const columns = results[0].columns;
+    return results[0].values.map((row) => ({
+      site: row[columns.indexOf('site')] as string,
+      total: row[columns.indexOf('total')] as number,
+      success: row[columns.indexOf('success')] as number,
+      failed: row[columns.indexOf('failed')] as number,
+      successRate: row[columns.indexOf('successRate')] as number,
     }));
   } finally {
     db.close();
@@ -102,8 +130,12 @@ export function getSuccessRateBySite(): SuccessRateBySite[] {
 /**
  * Get all runs for a specific git commit
  */
-export function getRunsByCommit(commitHash: string): RunRecord[] {
-  const db = new Database(DB_PATH, { readonly: true });
+export async function getRunsByCommit(commitHash: string): Promise<RunRecord[]> {
+  const db = await loadDatabase();
+
+  if (!db) {
+    return [];
+  }
 
   try {
     const query = `
@@ -113,7 +145,12 @@ export function getRunsByCommit(commitHash: string): RunRecord[] {
       ORDER BY timestamp DESC
     `;
 
-    const results = db.prepare(query).all(commitHash) as RunRecord[];
+    const stmt = db.prepare(query);
+    stmt.bind([commitHash]);
+    const results: RunRecord[] = [];
+    while (stmt.step()) {
+      results.push(stmt.getAsObject() as RunRecord);
+    }
     return results;
   } finally {
     db.close();
@@ -123,8 +160,12 @@ export function getRunsByCommit(commitHash: string): RunRecord[] {
 /**
  * Get all runs for a specific site
  */
-export function getRunsBySite(site: string): RunRecord[] {
-  const db = new Database(DB_PATH, { readonly: true });
+export async function getRunsBySite(site: string): Promise<RunRecord[]> {
+  const db = await loadDatabase();
+
+  if (!db) {
+    return [];
+  }
 
   try {
     const query = `
@@ -134,7 +175,12 @@ export function getRunsBySite(site: string): RunRecord[] {
       ORDER BY timestamp DESC
     `;
 
-    const results = db.prepare(query).all(site) as RunRecord[];
+    const stmt = db.prepare(query);
+    stmt.bind([site]);
+    const results: RunRecord[] = [];
+    while (stmt.step()) {
+      results.push(stmt.getAsObject() as RunRecord);
+    }
     return results;
   } finally {
     db.close();
@@ -144,8 +190,12 @@ export function getRunsBySite(site: string): RunRecord[] {
 /**
  * Get all failed runs (where success = 0)
  */
-export function getFailedRuns(): RunRecord[] {
-  const db = new Database(DB_PATH, { readonly: true });
+export async function getFailedRuns(): Promise<RunRecord[]> {
+  const db = await loadDatabase();
+
+  if (!db) {
+    return [];
+  }
 
   try {
     const query = `
@@ -155,7 +205,11 @@ export function getFailedRuns(): RunRecord[] {
       ORDER BY timestamp DESC
     `;
 
-    const results = db.prepare(query).all() as RunRecord[];
+    const stmt = db.prepare(query);
+    const results: RunRecord[] = [];
+    while (stmt.step()) {
+      results.push(stmt.getAsObject() as RunRecord);
+    }
     return results;
   } finally {
     db.close();
@@ -165,8 +219,12 @@ export function getFailedRuns(): RunRecord[] {
 /**
  * Get all runs since a specific timestamp
  */
-export function getRunsSince(dateString: string): RunRecord[] {
-  const db = new Database(DB_PATH, { readonly: true });
+export async function getRunsSince(dateString: string): Promise<RunRecord[]> {
+  const db = await loadDatabase();
+
+  if (!db) {
+    return [];
+  }
 
   try {
     // Parse the date string (ISO format or relative like "7d")
@@ -202,7 +260,12 @@ export function getRunsSince(dateString: string): RunRecord[] {
       ORDER BY timestamp DESC
     `;
 
-    const results = db.prepare(query).all(sinceDate.toISOString()) as RunRecord[];
+    const stmt = db.prepare(query);
+    stmt.bind([sinceDate.toISOString()]);
+    const results: RunRecord[] = [];
+    while (stmt.step()) {
+      results.push(stmt.getAsObject() as RunRecord);
+    }
     return results;
   } finally {
     db.close();
@@ -212,8 +275,23 @@ export function getRunsSince(dateString: string): RunRecord[] {
 /**
  * Get overall statistics
  */
-export function getOverallStats(): OverallStats {
-  const db = new Database(DB_PATH, { readonly: true });
+export async function getOverallStats(): Promise<OverallStats> {
+  const db = await loadDatabase();
+
+  if (!db) {
+    return {
+      totalRuns: 0,
+      successfulRuns: 0,
+      failedRuns: 0,
+      successRate: 0,
+      uniqueSites: 0,
+      uniqueCommits: 0,
+      dateRange: {
+        earliest: null,
+        latest: null,
+      },
+    };
+  }
 
   try {
     const query = `
@@ -228,31 +306,46 @@ export function getOverallStats(): OverallStats {
       FROM e2e_runs
     `;
 
-    const result = db.prepare(query).get() as {
-      totalRuns: number;
-      successfulRuns: number;
-      failedRuns: number;
-      uniqueSites: number;
-      uniqueCommits: number;
-      earliest: string | null;
-      latest: string | null;
-    };
+    const results = db.exec(query);
+    if (!results.length || !results[0].values.length) {
+      return {
+        totalRuns: 0,
+        successfulRuns: 0,
+        failedRuns: 0,
+        successRate: 0,
+        uniqueSites: 0,
+        uniqueCommits: 0,
+        dateRange: {
+          earliest: null,
+          latest: null,
+        },
+      };
+    }
+
+    const columns = results[0].columns;
+    const row = results[0].values[0];
+
+    const totalRuns = (row[columns.indexOf('totalRuns')] as number) || 0;
+    const successfulRuns = (row[columns.indexOf('successfulRuns')] as number) || 0;
+    const failedRuns = (row[columns.indexOf('failedRuns')] as number) || 0;
+    const uniqueSites = (row[columns.indexOf('uniqueSites')] as number) || 0;
+    const uniqueCommits = (row[columns.indexOf('uniqueCommits')] as number) || 0;
+    const earliest = (row[columns.indexOf('earliest')] as string | null) || null;
+    const latest = (row[columns.indexOf('latest')] as string | null) || null;
 
     const successRate =
-      result.totalRuns > 0
-        ? Math.round(((100 * (result.successfulRuns || 0)) / result.totalRuns) * 100) / 100
-        : 0;
+      totalRuns > 0 ? Math.round(((100 * successfulRuns) / totalRuns) * 100) / 100 : 0;
 
     return {
-      totalRuns: result.totalRuns,
-      successfulRuns: result.successfulRuns || 0,
-      failedRuns: result.failedRuns || 0,
+      totalRuns,
+      successfulRuns,
+      failedRuns,
       successRate,
-      uniqueSites: result.uniqueSites,
-      uniqueCommits: result.uniqueCommits,
+      uniqueSites,
+      uniqueCommits,
       dateRange: {
-        earliest: result.earliest,
-        latest: result.latest,
+        earliest,
+        latest,
       },
     };
   } finally {

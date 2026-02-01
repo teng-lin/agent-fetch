@@ -22,10 +22,12 @@ process.emit = function (event: string, error: Error, ...args: unknown[]) {
 
 import { initializeDatabase, closeDatabase } from './src/__tests__/db-recorder.js';
 
-// Initialize E2E database for recording test results
-try {
-  initializeDatabase();
-  process.on('exit', closeDatabase);
-} catch (error) {
-  console.warn('Failed to initialize E2E database:', error);
-}
+// Initialize E2E database for recording test results (async)
+(async () => {
+  try {
+    await initializeDatabase();
+    process.on('exit', closeDatabase);
+  } catch (error) {
+    console.warn('Failed to initialize E2E database:', error);
+  }
+})();

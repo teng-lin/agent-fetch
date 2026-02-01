@@ -6,11 +6,14 @@
  * - Antibot detections (provider, confidence, evidence)
  * - Optional HTML compression (RECORD_HTML=true)
  * - Git commit tracking for reproducibility
+ *
+ * Uses sql.js (pure JavaScript SQLite) for cross-platform compatibility
  */
 
-import Database from 'better-sqlite3';
+import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import { gzipSync } from 'zlib';
 import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { FetchResult } from '../fetch/types.js';
@@ -19,7 +22,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../../');
 
 let dbPath: string = path.join(PROJECT_ROOT, 'lynxget-e2e.db');
-let db: Database.Database | null = null;
+let db: SqlJsDatabase | null = null;
+let sqlJs: any = null;
 let cachedGitCommit: string | null = null;
 
 /**
@@ -57,15 +61,25 @@ function getGitCommit(): string {
  * Initialize database connection and create tables if needed
  * Idempotent - safe to call multiple times
  */
-export function initializeDatabase(): void {
+export async function initializeDatabase(): Promise<void> {
   if (db) return;
 
   try {
-    db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
+    // Initialize sql.js
+    if (!sqlJs) {
+      sqlJs = await initSqlJs();
+    }
+
+    // Load existing database or create new one
+    if (existsSync(dbPath)) {
+      const buffer = readFileSync(dbPath);
+      db = new sqlJs.Database(buffer);
+    } else {
+      db = new sqlJs.Database();
+    }
 
     // Create e2e_runs table
-    db.exec(`
+    db.run(`
       CREATE TABLE IF NOT EXISTS e2e_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         git_commit TEXT NOT NULL,
@@ -97,7 +111,7 @@ export function initializeDatabase(): void {
     `);
 
     // Create antibot_detections table
-    db.exec(`
+    db.run(`
       CREATE TABLE IF NOT EXISTS antibot_detections (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id INTEGER NOT NULL,
@@ -116,8 +130,25 @@ export function initializeDatabase(): void {
       CREATE INDEX IF NOT EXISTS idx_antibot_detections_provider
         ON antibot_detections(provider);
     `);
+
+    // Save database to disk
+    saveDatabaseToDisk();
   } catch (err) {
     console.error('Failed to initialize database:', err);
+  }
+}
+
+/**
+ * Save the current database to disk
+ */
+function saveDatabaseToDisk(): void {
+  if (!db) return;
+  try {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    writeFileSync(dbPath, buffer);
+  } catch (err) {
+    console.warn('Failed to save database to disk:', err);
   }
 }
 
@@ -169,7 +200,8 @@ function extractPublishDate(result: FetchResult): string | null {
  */
 export function recordTestResult(site: string, result: FetchResult): void {
   if (!db) {
-    initializeDatabase();
+    // Reload database or initialize if needed
+    reloadOrInitializeDatabase();
   }
 
   if (!db) {
@@ -194,17 +226,18 @@ export function recordTestResult(site: string, result: FetchResult): void {
     const runType = 'fetch'; // E2E fetch tests are always 'fetch' type
 
     // Compress HTML if enabled
-    let compressedHtml: Buffer | null = null;
+    let compressedHtml: Uint8Array | null = null;
     if (shouldRecordHtml && result.rawHtml) {
       try {
-        compressedHtml = gzipSync(result.rawHtml);
+        const compressed = gzipSync(result.rawHtml);
+        compressedHtml = new Uint8Array(compressed);
       } catch (err) {
         console.warn('Failed to compress HTML:', err);
       }
     }
 
     // Insert main result
-    const insertStmt = db.prepare(`
+    db.run(`
       INSERT INTO e2e_runs (
         git_commit,
         site,
@@ -224,15 +257,13 @@ export function recordTestResult(site: string, result: FetchResult): void {
         raw_html_compressed,
         timestamp
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const info = insertStmt.run(
+    `, [
       gitCommit,
       site,
       runType,
       result.url,
       result.success ? 1 : 0,
-      result.latencyMs,
+      result.latencyMs ?? null,
       statusCode,
       result.extractionMethod || null,
       result.title || null,
@@ -244,27 +275,27 @@ export function recordTestResult(site: string, result: FetchResult): void {
       result.errorDetails?.type || null,
       compressedHtml,
       timestamp
-    );
+    ]);
 
-    const runId = info.lastInsertRowid;
+    // Get the last inserted row ID
+    const lastIdResult = db.exec('SELECT last_insert_rowid() as id');
+    const runId = lastIdResult[0]?.values[0]?.[0];
 
     // Insert antibot detections if present
     if (result.antibot && result.antibot.length > 0 && typeof runId === 'number') {
-      const insertAntibotStmt = db.prepare(`
-        INSERT INTO antibot_detections (
-          run_id,
-          provider,
-          name,
-          category,
-          confidence,
-          evidence,
-          suggested_action,
-          timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
       for (const detection of result.antibot) {
-        insertAntibotStmt.run(
+        db.run(`
+          INSERT INTO antibot_detections (
+            run_id,
+            provider,
+            name,
+            category,
+            confidence,
+            evidence,
+            suggested_action,
+            timestamp
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
           runId,
           detection.provider,
           detection.name,
@@ -273,9 +304,12 @@ export function recordTestResult(site: string, result: FetchResult): void {
           JSON.stringify(detection.evidence),
           detection.suggestedAction,
           timestamp
-        );
+        ]);
       }
     }
+
+    // Save database to disk after each insert
+    saveDatabaseToDisk();
   } catch (err) {
     console.warn('Failed to record test result to database:', err);
     // Don't throw - let tests continue even if recording fails
@@ -283,12 +317,34 @@ export function recordTestResult(site: string, result: FetchResult): void {
 }
 
 /**
- * Close database connection
+ * Reload database from disk or initialize if needed
+ */
+function reloadOrInitializeDatabase(): void {
+  try {
+    if (!sqlJs) {
+      // This is synchronous loading - sql.js initialization is already done
+      return;
+    }
+
+    if (existsSync(dbPath)) {
+      const buffer = readFileSync(dbPath);
+      db = new sqlJs.Database(buffer);
+    } else {
+      db = new sqlJs.Database();
+    }
+  } catch (err) {
+    console.warn('Failed to reload database:', err);
+  }
+}
+
+/**
+ * Close database connection and save to disk
  * Safe to call multiple times
  */
 export function closeDatabase(): void {
   if (db) {
     try {
+      saveDatabaseToDisk();
       db.close();
     } catch (err) {
       console.warn('Error closing database:', err);
@@ -300,7 +356,7 @@ export function closeDatabase(): void {
 /**
  * Get database instance (for testing)
  */
-export function getDatabase(): Database.Database | null {
+export function getDatabase(): SqlJsDatabase | null {
   return db;
 }
 
