@@ -28,7 +28,8 @@
     "test:e2e:all": "tsx scripts/test-fetch-vs-curl.ts",
     "report:fetch": "tsx scripts/generate-fetch-e2e-report.ts",
     "report:curl": "tsx scripts/generate-curl-report.ts",
-    "report:fetch-vs-curl": "tsx scripts/generate-fetch-vs-curl-report.ts"
+    "report:fetch-vs-curl": "tsx scripts/generate-fetch-vs-curl-report.ts",
+    "e2e:db:cleanup": "tsx scripts/e2e-db-cleanup.ts"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -74,5 +75,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.53.0",
     "vitest": "^4.0.17"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.10.0"
   }
 }
