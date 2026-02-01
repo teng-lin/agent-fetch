@@ -61,59 +61,63 @@ Data available for queries and analysis
 ## Database Schema
 
 ### `e2e_runs` Table
+
 Primary record for each test execution.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PRIMARY KEY | Auto-increment identifier |
-| `test_name` | TEXT NOT NULL | Name of the E2E test case |
-| `git_commit` | TEXT NOT NULL | Git commit hash (40 chars) |
-| `timestamp` | DATETIME NOT NULL | ISO 8601 timestamp when test ran |
-| `url` | TEXT NOT NULL | Target URL being tested |
-| `status` | TEXT NOT NULL | 'pass' \| 'fail' \| 'error' |
-| `duration_ms` | INTEGER | Total test execution time in milliseconds |
-| `http_status` | INTEGER | HTTP response status code (e.g., 200, 403, 429) |
-| `tls_fingerprint` | TEXT | TLS fingerprint used (from httpcloak) |
-| `user_agent` | TEXT | User agent header sent |
-| `referer` | TEXT | Referer header sent |
+| Column            | Type                | Description                                     |
+| ----------------- | ------------------- | ----------------------------------------------- |
+| `id`              | INTEGER PRIMARY KEY | Auto-increment identifier                       |
+| `test_name`       | TEXT NOT NULL       | Name of the E2E test case                       |
+| `git_commit`      | TEXT NOT NULL       | Git commit hash (40 chars)                      |
+| `timestamp`       | DATETIME NOT NULL   | ISO 8601 timestamp when test ran                |
+| `url`             | TEXT NOT NULL       | Target URL being tested                         |
+| `status`          | TEXT NOT NULL       | 'pass' \| 'fail' \| 'error'                     |
+| `duration_ms`     | INTEGER             | Total test execution time in milliseconds       |
+| `http_status`     | INTEGER             | HTTP response status code (e.g., 200, 403, 429) |
+| `tls_fingerprint` | TEXT                | TLS fingerprint used (from httpcloak)           |
+| `user_agent`      | TEXT                | User agent header sent                          |
+| `referer`         | TEXT                | Referer header sent                             |
 
 ### `extraction_results` Table
+
 Results from each of the 5 extraction strategies per run.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PRIMARY KEY | Auto-increment |
-| `run_id` | INTEGER FOREIGN KEY | References `e2e_runs.id` |
-| `strategy` | TEXT NOT NULL | Strategy: 'nextjs' \| 'json-ld' \| 'readability' \| 'css-selectors' \| 'unfluff' |
-| `success` | INTEGER NOT NULL | 1 (success) or 0 (failure) |
-| `title` | TEXT | Extracted article title |
-| `body` | TEXT | Extracted article body/content |
-| `author` | TEXT | Extracted author name |
-| `publish_date` | TEXT | Extracted publication date |
-| `extraction_time_ms` | INTEGER | How long this strategy took to extract |
-| `raw_html_compressed` | BLOB | Optional gzipped raw HTML (only if `RECORD_HTML=true`) |
+| Column                | Type                | Description                                                                      |
+| --------------------- | ------------------- | -------------------------------------------------------------------------------- |
+| `id`                  | INTEGER PRIMARY KEY | Auto-increment                                                                   |
+| `run_id`              | INTEGER FOREIGN KEY | References `e2e_runs.id`                                                         |
+| `strategy`            | TEXT NOT NULL       | Strategy: 'nextjs' \| 'json-ld' \| 'readability' \| 'css-selectors' \| 'unfluff' |
+| `success`             | INTEGER NOT NULL    | 1 (success) or 0 (failure)                                                       |
+| `title`               | TEXT                | Extracted article title                                                          |
+| `body`                | TEXT                | Extracted article body/content                                                   |
+| `author`              | TEXT                | Extracted author name                                                            |
+| `publish_date`        | TEXT                | Extracted publication date                                                       |
+| `extraction_time_ms`  | INTEGER             | How long this strategy took to extract                                           |
+| `raw_html_compressed` | BLOB                | Optional gzipped raw HTML (only if `RECORD_HTML=true`)                           |
 
 ### `antibot_detections` Table
+
 Bot detection signatures found during request.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PRIMARY KEY | Auto-increment |
-| `run_id` | INTEGER FOREIGN KEY | References `e2e_runs.id` |
-| `signature_type` | TEXT NOT NULL | Detection type: 'cookie' \| 'header' \| 'html' \| 'window_object' |
-| `provider` | TEXT NOT NULL | Provider name (e.g., 'cloudflare', 'imperva', 'akamai') |
+| Column           | Type                | Description                                                       |
+| ---------------- | ------------------- | ----------------------------------------------------------------- |
+| `id`             | INTEGER PRIMARY KEY | Auto-increment                                                    |
+| `run_id`         | INTEGER FOREIGN KEY | References `e2e_runs.id`                                          |
+| `signature_type` | TEXT NOT NULL       | Detection type: 'cookie' \| 'header' \| 'html' \| 'window_object' |
+| `provider`       | TEXT NOT NULL       | Provider name (e.g., 'cloudflare', 'imperva', 'akamai')           |
 
 ### `http_details` Table
+
 Additional HTTP request/response metadata.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PRIMARY KEY | Auto-increment |
-| `run_id` | INTEGER FOREIGN KEY | References `e2e_runs.id` |
-| `request_headers` | TEXT | JSON string of all request headers |
-| `response_headers` | TEXT | JSON string of all response headers |
-| `response_size_bytes` | INTEGER | Size of response body in bytes |
-| `cookies_received` | TEXT | JSON array of Set-Cookie headers |
+| Column                | Type                | Description                         |
+| --------------------- | ------------------- | ----------------------------------- |
+| `id`                  | INTEGER PRIMARY KEY | Auto-increment                      |
+| `run_id`              | INTEGER FOREIGN KEY | References `e2e_runs.id`            |
+| `request_headers`     | TEXT                | JSON string of all request headers  |
+| `response_headers`    | TEXT                | JSON string of all response headers |
+| `response_size_bytes` | INTEGER             | Size of response body in bytes      |
+| `cookies_received`    | TEXT                | JSON array of Set-Cookie headers    |
 
 ## Implementation Details
 
@@ -147,6 +151,7 @@ RECORD_HTML=true
 **File:** `scripts/e2e-db-cleanup.ts` (new)
 
 Usage:
+
 ```bash
 npm run e2e:db:cleanup -- --before "2025-01-15"
 npm run e2e:db:cleanup -- --before "30d"  # Delete runs older than 30 days
@@ -154,6 +159,7 @@ npm run e2e:db:cleanup -- --all           # Delete everything
 ```
 
 Behavior:
+
 - Accept date in ISO format or relative format (Xd, Xh, Xm)
 - Show summary: "Deleted 1,234 runs and 5,678 extraction results"
 - Require confirmation before deletion
@@ -161,6 +167,7 @@ Behavior:
 **File:** `package.json` (modify)
 
 Add scripts:
+
 ```json
 {
   "scripts": {
@@ -175,6 +182,7 @@ Add scripts:
 **File:** `src/__tests__/db-query.ts` (new)
 
 Helper functions for analysis:
+
 - `getSuccessRateByStrategy()` - % success per extraction strategy
 - `getSuccessRateByStrategyAndSite()` - % success per strategy per domain
 - `getSlowestStrategies()` - Average extraction time per strategy
@@ -185,6 +193,7 @@ Helper functions for analysis:
 **File:** `scripts/e2e-db-query.ts` (new)
 
 CLI tool for querying database:
+
 ```bash
 npm run e2e:db:query -- --strategy readability --stats
 npm run e2e:db:query -- --site example.com --since "2025-01-01"
