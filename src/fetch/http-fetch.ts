@@ -28,7 +28,15 @@ function failResult(
   fields: Omit<FetchResult, 'success' | 'url' | 'latencyMs'>,
   statusCode?: number
 ): FetchResult {
-  return { success: false, url, latencyMs: Date.now() - startTime, statusCode: statusCode ?? null, rawHtml: null, extractionMethod: null, ...fields };
+  return {
+    success: false,
+    url,
+    latencyMs: Date.now() - startTime,
+    statusCode: statusCode ?? null,
+    rawHtml: null,
+    extractionMethod: null,
+    ...fields,
+  };
 }
 
 /**
@@ -87,26 +95,36 @@ export async function httpFetch(url: string): Promise<FetchResult> {
 
     if (!response.success || !response.html) {
       if (response.statusCode === 429) {
-        return failResult(url, startTime, {
-          error: 'rate_limited',
-          errorDetails: { statusCode: response.statusCode },
-          suggestedAction: 'wait_and_retry',
-          hint: 'Too many requests, wait before retrying',
-          antibot: antibotField,
-        }, response.statusCode);
+        return failResult(
+          url,
+          startTime,
+          {
+            error: 'rate_limited',
+            errorDetails: { statusCode: response.statusCode },
+            suggestedAction: 'wait_and_retry',
+            hint: 'Too many requests, wait before retrying',
+            antibot: antibotField,
+          },
+          response.statusCode
+        );
       }
 
       // Let high-confidence antibot detection override the default suggested action
       const actionable = antibot.find((d) => d.confidence >= 90 && d.suggestedAction !== 'unknown');
       const defaultAction = response.statusCode === 403 ? 'retry_with_extract' : 'skip';
 
-      return failResult(url, startTime, {
-        error: response.error || 'http_error',
-        errorDetails: { statusCode: response.statusCode },
-        suggestedAction: actionable ? mapAction(actionable.suggestedAction) : defaultAction,
-        hint: response.statusCode === 403 ? 'Site may require browser rendering' : undefined,
-        antibot: antibotField,
-      }, response.statusCode);
+      return failResult(
+        url,
+        startTime,
+        {
+          error: response.error || 'http_error',
+          errorDetails: { statusCode: response.statusCode },
+          suggestedAction: actionable ? mapAction(actionable.suggestedAction) : defaultAction,
+          hint: response.statusCode === 403 ? 'Site may require browser rendering' : undefined,
+          antibot: antibotField,
+        },
+        response.statusCode
+      );
     }
 
     // Validate content
@@ -117,40 +135,55 @@ export async function httpFetch(url: string): Promise<FetchResult> {
     );
 
     if (!validation.valid) {
-      return failResult(url, startTime, {
-        error: validation.error,
-        errorDetails: validation.errorDetails,
-        suggestedAction: BROWSER_RETRY_ERRORS.has(validation.error!)
-          ? 'retry_with_extract'
-          : 'skip',
-        hint: VALIDATION_ERROR_HINTS[validation.error!],
-        antibot: antibotField,
-      }, response.statusCode);
+      return failResult(
+        url,
+        startTime,
+        {
+          error: validation.error,
+          errorDetails: validation.errorDetails,
+          suggestedAction: BROWSER_RETRY_ERRORS.has(validation.error!)
+            ? 'retry_with_extract'
+            : 'skip',
+          hint: VALIDATION_ERROR_HINTS[validation.error!],
+          antibot: antibotField,
+        },
+        response.statusCode
+      );
     }
 
     // Extract content
     const extracted = extractFromHtml(response.html, url);
 
     if (!extracted) {
-      return failResult(url, startTime, {
-        error: 'extraction_failed',
-        errorDetails: { type: 'null_result' },
-        suggestedAction: 'retry_with_extract',
-        hint: 'Failed to parse HTML',
-        antibot: antibotField,
-      }, response.statusCode);
+      return failResult(
+        url,
+        startTime,
+        {
+          error: 'extraction_failed',
+          errorDetails: { type: 'null_result' },
+          suggestedAction: 'retry_with_extract',
+          hint: 'Failed to parse HTML',
+          antibot: antibotField,
+        },
+        response.statusCode
+      );
     }
 
     // Handle insufficient extracted content
     if (!extracted.textContent || extracted.textContent.trim().length < MIN_CONTENT_LENGTH) {
       const wordCount = extracted.textContent ? extracted.textContent.split(/\s+/).length : 0;
-      return failResult(url, startTime, {
-        error: 'insufficient_content',
-        errorDetails: { wordCount },
-        suggestedAction: 'retry_with_extract',
-        hint: 'Extracted content too short',
-        antibot: antibotField,
-      }, response.statusCode);
+      return failResult(
+        url,
+        startTime,
+        {
+          error: 'insufficient_content',
+          errorDetails: { wordCount },
+          suggestedAction: 'retry_with_extract',
+          hint: 'Extracted content too short',
+          antibot: antibotField,
+        },
+        response.statusCode
+      );
     }
 
     const latencyMs = Date.now() - startTime;

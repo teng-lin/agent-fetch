@@ -125,15 +125,6 @@ function formatStats(): void {
   }
 }
 
-function formatSiteName(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname;
-  } catch {
-    return url;
-  }
-}
-
 function formatBySite(site: string): void {
   try {
     const runs = getRunsBySite(site);
@@ -145,7 +136,7 @@ function formatBySite(site: string): void {
 
     const successCount = runs.filter((r) => r.success === 1).length;
     const failureCount = runs.length - successCount;
-    const successRate = Math.round((100 * successCount) / runs.length * 100) / 100;
+    const successRate = Math.round(((100 * successCount) / runs.length) * 100) / 100;
 
     console.log(`\n📍 Runs for Site: ${site}\n`);
     console.log(`  Total:    ${runs.length}`);
@@ -188,7 +179,7 @@ function formatByCommit(commit: string): void {
 
     const successCount = runs.filter((r) => r.success === 1).length;
     const failureCount = runs.length - successCount;
-    const successRate = Math.round((100 * successCount) / runs.length * 100) / 100;
+    const successRate = Math.round(((100 * successCount) / runs.length) * 100) / 100;
     const uniqueSites = new Set(runs.map((r) => r.site)).size;
 
     console.log(`\n🔧 Runs for Commit: ${commit}\n`);
@@ -264,7 +255,7 @@ function formatSince(dateStr: string): void {
     }
 
     const successCount = runs.filter((r) => r.success === 1).length;
-    const successRate = Math.round((100 * successCount) / runs.length * 100) / 100;
+    const successRate = Math.round(((100 * successCount) / runs.length) * 100) / 100;
 
     console.log(`\n📅 Runs Since: ${dateStr}\n`);
     console.log(`  Total:   ${runs.length}`);

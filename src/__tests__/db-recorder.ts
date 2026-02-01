@@ -13,9 +13,7 @@ import { gzipSync } from 'zlib';
 import { execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fs from 'fs';
 import type { FetchResult } from '../fetch/types.js';
-import type { AntibotDetection } from '../antibot/detector.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../../');
@@ -180,8 +178,7 @@ export function recordTestResult(site: string, result: FetchResult): void {
 
   try {
     const shouldRecordDb =
-      process.env.RECORD_E2E_DB !== 'false' &&
-      process.env.RECORD_E2E_DB !== '0';
+      process.env.RECORD_E2E_DB !== 'false' && process.env.RECORD_E2E_DB !== '0';
     const shouldRecordHtml = process.env.RECORD_HTML === 'true' || process.env.RECORD_HTML === '1';
 
     if (!shouldRecordDb) {

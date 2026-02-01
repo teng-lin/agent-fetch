@@ -240,7 +240,7 @@ export function getOverallStats(): OverallStats {
 
     const successRate =
       result.totalRuns > 0
-        ? Math.round((100 * (result.successfulRuns || 0)) / result.totalRuns * 100) / 100
+        ? Math.round(((100 * (result.successfulRuns || 0)) / result.totalRuns) * 100) / 100
         : 0;
 
     return {

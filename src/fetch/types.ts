@@ -53,7 +53,7 @@ export interface FetchResult {
   antibot?: AntibotDetection[];
 
   // E2E recording fields
-  statusCode?: number | null;     // HTTP response status (200, 403, 429, etc.)
-  rawHtml?: string | null;        // Raw HTML response body
+  statusCode?: number | null; // HTTP response status (200, 403, 429, etc.)
+  rawHtml?: string | null; // Raw HTML response body
   extractionMethod?: string | null; // Which strategy won: 'readability' | 'json-ld' | etc.
 }
