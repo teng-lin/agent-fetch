@@ -527,5 +527,44 @@ describe('content-extractors', () => {
       expect(result).not.toBeNull();
       expect(result!.byline).toBe('Alice');
     });
+
+    it('composes byline from JSON-LD when Readability wins for content', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      // JSON-LD has rich metadata but articleBody is too short for tryJsonLdExtraction to return
+      // a full result. The metadata-only extractor should still capture the author.
+      const jsonLd = {
+        '@type': 'NewsArticle',
+        headline: 'JSON-LD Title',
+        articleBody: 'Too short',
+        author: { '@type': 'Person', name: 'Jane Author' },
+      };
+      const html = `<html><head>
+        <title>Page Title</title>
+        <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
+      </head><body><article><h1>Article</h1><p>${content}</p></article></body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toMatch(/^readability/);
+      expect(result!.byline).toBe('Jane Author');
+    });
+
+    it('does not overwrite existing metadata from winning strategy', () => {
+      vi.mocked(sitePreferJsonLd).mockReturnValue(true);
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const jsonLd = {
+        '@type': 'NewsArticle',
+        headline: 'JSON-LD Title',
+        articleBody: content,
+        author: { '@type': 'Person', name: 'JSON Author' },
+      };
+      const html = `<html><head>
+        <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
+      </head><body></body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('json-ld');
+      // JSON-LD already has its own byline — should not be overwritten
+      expect(result!.byline).toBe('JSON Author');
+    });
   });
 });

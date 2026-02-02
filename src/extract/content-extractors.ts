@@ -308,6 +308,75 @@ export function tryJsonLdExtraction(document: Document, url: string): Extraction
   return null;
 }
 
+interface JsonLdMetadata {
+  byline: string | null;
+  publishedTime: string | null;
+}
+
+/**
+ * Extract metadata-only fields from JSON-LD (author, dates).
+ * Unlike tryJsonLdExtraction, this does NOT require articleBody to meet content threshold.
+ * Used for metadata composition when another strategy wins for content.
+ */
+function extractJsonLdMetadata(document: Document): JsonLdMetadata | null {
+  try {
+    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+    for (const script of scripts) {
+      try {
+        const data = JSON.parse(script.textContent ?? '');
+        const items = Array.isArray(data) ? data : data?.['@graph'] ? data['@graph'] : [data];
+        for (const item of items) {
+          if (!item || typeof item !== 'object') continue;
+          const itemType = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
+          if (typeof itemType !== 'string') continue;
+          if (!ARTICLE_TYPES.includes(itemType as (typeof ARTICLE_TYPES)[number])) continue;
+          const byline = extractAuthorFromJsonLd(item.author);
+          const publishedTime =
+            (item.datePublished as string) ?? (item.dateCreated as string) ?? null;
+          if (byline || publishedTime) {
+            return { byline, publishedTime };
+          }
+        }
+      } catch {
+        /* continue */
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+/**
+ * Compose best metadata from multiple extraction results and JSON-LD metadata.
+ * Supplements missing metadata fields on the winner from other sources.
+ */
+function composeMetadata(
+  winner: ExtractionResult,
+  candidates: (ExtractionResult | null)[],
+  jsonLdMeta: JsonLdMetadata | null
+): ExtractionResult {
+  const composed = { ...winner };
+
+  // First try JSON-LD metadata (richest structured source)
+  if (jsonLdMeta) {
+    if (!composed.byline && jsonLdMeta.byline) composed.byline = jsonLdMeta.byline;
+    if (!composed.publishedTime && jsonLdMeta.publishedTime)
+      composed.publishedTime = jsonLdMeta.publishedTime;
+  }
+
+  // Then try other extraction results
+  for (const candidate of candidates) {
+    if (!candidate || candidate === winner) continue;
+    if (!composed.byline && candidate.byline) composed.byline = candidate.byline;
+    if (!composed.publishedTime && candidate.publishedTime)
+      composed.publishedTime = candidate.publishedTime;
+    if (!composed.siteName && candidate.siteName) composed.siteName = candidate.siteName;
+    if (!composed.lang && candidate.lang) composed.lang = candidate.lang;
+  }
+  return composed;
+}
+
 /**
  * Strategy 4: Extract from Next.js __NEXT_DATA__
  * Some sites embed full article content in the page props JSON
@@ -459,10 +528,9 @@ export function tryTextDensityExtraction(html: string, url: string): ExtractionR
  * Uses linkedom for DOM parsing (crash-resistant, no CSS parsing errors)
  */
 export function extractFromHtml(html: string, url: string): ExtractionResult | null {
-  // Use linkedom instead of JSDOM - more crash-resistant with malformed HTML
   const { document } = parseHTML(html);
 
-  // Check if this site uses Next.js __NEXT_DATA__ extraction (config-driven)
+  // Config-driven: Next.js early return (these sites have complete metadata)
   if (siteUseNextData(url)) {
     const nextDataResult = tryNextDataExtraction(document, url);
     if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
@@ -471,11 +539,9 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     }
   }
 
-  // Check if this site prefers JSON-LD (full content in structured data)
+  // Config-driven: JSON-LD preferred sites get early return
   const preferJsonLd = sitePreferJsonLd(url);
-
   if (preferJsonLd) {
-    // For sites with full content in JSON-LD, try it first
     const jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
@@ -483,46 +549,48 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     }
   }
 
-  // Strategy 1: Try Readability first (most reliable for clean content)
+  // Extract JSON-LD metadata for composition (lightweight, no content threshold)
+  const jsonLdMeta = extractJsonLdMetadata(document);
+
+  // Run all strategies
   const readabilityResult = tryReadability(document, url);
-  if (meetsThreshold(readabilityResult, GOOD_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'readability' }, 'Extraction succeeded');
-    return readabilityResult;
-  }
-
-  // Strategy 2: Try JSON-LD (structured data, often has full article)
   const jsonLdResult = preferJsonLd ? null : tryJsonLdExtraction(document, url);
-  if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded');
-    return jsonLdResult;
-  }
-
-  // Strategy 3: Try selector-based extraction
   const selectorResult = trySelectorExtraction(document, url);
-  if (meetsThreshold(selectorResult, MIN_CONTENT_LENGTH)) {
-    logger.debug({ url, method: selectorResult!.method }, 'Extraction succeeded');
-    return selectorResult;
-  }
-
-  // Strategy 4: Try text density analysis (statistical approach, different from heuristic scoring)
   const textDensityResult = tryTextDensityExtraction(html, url);
-  if (meetsThreshold(textDensityResult, MIN_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'text-density' }, 'Extraction succeeded');
-    return textDensityResult;
-  }
-
-  // Strategy 5: Try unfluff (different heuristics, good for unusual HTML)
   const unfluffResult = tryUnfluffExtraction(html, url);
-  if (meetsThreshold(unfluffResult, MIN_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'unfluff' }, 'Extraction succeeded');
-    return unfluffResult;
+
+  // All results for metadata composition
+  const allResults = [
+    readabilityResult,
+    jsonLdResult,
+    selectorResult,
+    textDensityResult,
+    unfluffResult,
+  ];
+
+  // Pick winner by threshold (same priority order as before)
+  const candidates: [ExtractionResult | null, number][] = [
+    [readabilityResult, GOOD_CONTENT_LENGTH],
+    [jsonLdResult, GOOD_CONTENT_LENGTH],
+    [selectorResult, MIN_CONTENT_LENGTH],
+    [textDensityResult, MIN_CONTENT_LENGTH],
+    [unfluffResult, MIN_CONTENT_LENGTH],
+  ];
+
+  for (const [result, threshold] of candidates) {
+    if (meetsThreshold(result, threshold)) {
+      logger.debug({ url, method: result!.method }, 'Extraction succeeded');
+      return composeMetadata(result!, allResults, jsonLdMeta);
+    }
   }
 
-  // Return best partial result if we have one
+  // Return best partial result with composition
   const partialResult =
     readabilityResult ?? jsonLdResult ?? selectorResult ?? textDensityResult ?? unfluffResult;
-  if (!partialResult) {
-    logger.debug({ url }, 'All extraction strategies failed');
+  if (partialResult) {
+    return composeMetadata(partialResult, allResults, jsonLdMeta);
   }
-  return partialResult;
+
+  logger.debug({ url }, 'All extraction strategies failed');
+  return null;
 }
