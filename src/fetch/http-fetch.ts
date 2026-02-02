@@ -7,6 +7,7 @@ import { extractFromHtml } from '../extract/content-extractors.js';
 import { detectFromResponse, detectFromHtml, mergeDetections } from '../antibot/detector.js';
 import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
 import { logger } from '../logger.js';
+import type { ExtractionResult } from '../extract/types.js';
 import type { FetchResult, ValidationError } from './types.js';
 import type { AntibotDetection } from '../antibot/detector.js';
 
@@ -19,7 +20,13 @@ const VALIDATION_ERROR_HINTS: Partial<Record<ValidationError, string>> = {
   insufficient_content: 'Content is too short, may be a stub page',
 };
 
-const BROWSER_RETRY_ERRORS = new Set<ValidationError>(['challenge_detected', 'access_restricted']);
+// Validation errors where the page may still contain extractable article content
+// alongside challenge widgets or access-gate UI. These also warrant a browser retry
+// when extraction fails.
+const RECOVERABLE_VALIDATION_ERRORS = new Set<ValidationError>([
+  'challenge_detected',
+  'access_restricted',
+]);
 
 /** Build a failure result with common fields pre-filled. */
 function failResult(
@@ -36,6 +43,29 @@ function failResult(
     rawHtml: null,
     extractionMethod: null,
     ...fields,
+  };
+}
+
+/** Build a success result from an ExtractionResult, converting nulls to undefined. */
+function successResult(
+  url: string,
+  startTime: number,
+  extracted: ExtractionResult,
+  antibot?: AntibotDetection[]
+): FetchResult {
+  return {
+    success: true,
+    url,
+    latencyMs: Date.now() - startTime,
+    title: extracted.title ?? undefined,
+    byline: extracted.byline ?? undefined,
+    content: extracted.content ?? undefined,
+    textContent: extracted.textContent ?? undefined,
+    excerpt: extracted.excerpt ?? undefined,
+    siteName: extracted.siteName ?? undefined,
+    publishedTime: extracted.publishedTime ?? undefined,
+    lang: extracted.lang ?? undefined,
+    antibot,
   };
 }
 
@@ -135,13 +165,34 @@ export async function httpFetch(url: string): Promise<FetchResult> {
     );
 
     if (!validation.valid) {
+      // For challenge/access-gate pages, still attempt extraction — many sites serve
+      // full article content alongside challenge widgets or paywall UI elements.
+      if (RECOVERABLE_VALIDATION_ERRORS.has(validation.error!)) {
+        try {
+          logger.info(
+            { url, validationError: validation.error },
+            'Validation flagged issue, attempting extraction anyway'
+          );
+          const recovered = extractFromHtml(response.html, url);
+          if (recovered?.textContent && recovered.textContent.trim().length >= MIN_CONTENT_LENGTH) {
+            logger.info(
+              { url, method: recovered.method },
+              'Recovered content despite validation warning'
+            );
+            return successResult(url, startTime, recovered, antibotField);
+          }
+        } catch (e) {
+          logger.debug({ url, error: String(e) }, 'Recovery extraction failed');
+        }
+      }
+
       return failResult(
         url,
         startTime,
         {
           error: validation.error,
           errorDetails: validation.errorDetails,
-          suggestedAction: BROWSER_RETRY_ERRORS.has(validation.error!)
+          suggestedAction: RECOVERABLE_VALIDATION_ERRORS.has(validation.error!)
             ? 'retry_with_extract'
             : 'skip',
           hint: VALIDATION_ERROR_HINTS[validation.error!],
