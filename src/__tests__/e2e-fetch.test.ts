@@ -16,6 +16,7 @@ import { httpFetch } from '../fetch/http-fetch.js';
 import type { SiteTestConfig } from './fixtures/types.js';
 import type { FetchResult } from '../fetch/types.js';
 import { loadFixtures, runWithConcurrency, filterTestCases, wordCount } from './e2e-helpers.js';
+import { recordTestResult, startTestRun, endTestRun } from './db-recorder.js';
 
 const TEST_CONCURRENCY = parseInt(process.env.TEST_CONCURRENCY || '5', 10);
 const TEST_SET = process.env.TEST_SET || 'stable';
@@ -83,6 +84,11 @@ describe('E2E Fetch Tests', () => {
     console.log(`  Concurrency: ${TEST_CONCURRENCY}`);
     console.log('');
 
+    // Start a new test run
+    startTestRun('fetch');
+    let passCount = 0;
+    let failCount = 0;
+
     const failures: string[] = [];
     const transientSkips: string[] = [];
     const TRANSIENT_ERRORS = ['dns_rebinding_detected'];
@@ -92,6 +98,7 @@ describe('E2E Fetch Tests', () => {
 
       try {
         const result = await runFetch(tc.url);
+        recordTestResult(tc.site, result, tc.minWords);
         const words = wordCount(result.textContent);
         console.log(`${tc.site}: ${result.success ? 'OK' : 'FAIL'} - ${words} words`);
 
@@ -106,6 +113,7 @@ describe('E2E Fetch Tests', () => {
             return;
           }
           failures.push(`${tc.site}: fetch failed - ${result.error}`);
+          failCount++;
           return;
         }
 
@@ -115,20 +123,29 @@ describe('E2E Fetch Tests', () => {
             return;
           }
           failures.push(`${tc.site}: ${words} words (expected ${tc.minWords}+)`);
+          failCount++;
           return;
         }
 
         if (!result.title) {
           failures.push(`${tc.site}: no title`);
+          failCount++;
+          return;
         }
+
+        passCount++;
       } catch (err) {
         if (tc.expectedToFail) {
           console.log(`${tc.site}: Expected failure (${err})`);
           return;
         }
         failures.push(`${tc.site}: ${err}`);
+        failCount++;
       }
     });
+
+    // End the test run with statistics
+    endTestRun(filteredCases.length, passCount, failCount);
 
     if (transientSkips.length > 0) {
       console.log(`\n=== TRANSIENT SKIPS (${transientSkips.length}) ===`);
