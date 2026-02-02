@@ -10,6 +10,7 @@ import {
   tryJsonLdExtraction,
   tryNextDataExtraction,
   tryUnfluffExtraction,
+  tryTextDensityExtraction,
   extractFromHtml,
 } from '../extract/content-extractors.js';
 import {
@@ -375,6 +376,64 @@ describe('content-extractors', () => {
         'https://example.com/short'
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe('tryTextDensityExtraction', () => {
+    it('extracts article content using text density', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const html = `<html><head><title>Density Test</title><meta property="og:site_name" content="Test Site"></head><body><nav><a href="/">Home</a><a href="/about">About</a></nav><article><h1>Test Article</h1><p>${content}</p></article><aside><ul><li><a href="/1">Related 1</a></li><li><a href="/2">Related 2</a></li></ul></aside></body></html>`;
+      const result = tryTextDensityExtraction(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('text-density');
+      expect(result!.textContent!.length).toBeGreaterThanOrEqual(MIN_CONTENT_LENGTH);
+    });
+
+    it('supplements metadata from document', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const html = `<html><head><meta property="og:title" content="OG Title"><meta property="og:site_name" content="My Site"><meta property="article:published_time" content="2024-06-01"></head><body><article><p>${content}</p></article></body></html>`;
+      const result = tryTextDensityExtraction(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('OG Title');
+      expect(result!.siteName).toBe('My Site');
+      expect(result!.publishedTime).toBe('2024-06-01');
+    });
+
+    it('returns null for short content', () => {
+      const html = '<html><body><p>Too short</p></body></html>';
+      expect(tryTextDensityExtraction(html, 'https://example.com/short')).toBeNull();
+    });
+
+    it('returns null for empty body', () => {
+      const html = '<html><body></body></html>';
+      expect(tryTextDensityExtraction(html, 'https://example.com/empty')).toBeNull();
+    });
+
+    it('handles malformed HTML gracefully', () => {
+      const result = tryTextDensityExtraction('<not even html', 'https://example.com/garbage');
+      expect(result).toBeNull();
+    });
+
+    it('handles pages with mostly links gracefully', () => {
+      const links = Array.from({ length: 50 }, (_, i) => `<a href="/page${i}">Link ${i}</a>`).join(
+        ''
+      );
+      const html = `<html><body><nav>${links}</nav><p>Small text</p></body></html>`;
+      const result = tryTextDensityExtraction(html, 'https://example.com/links');
+      // Should return null or very short content - not the nav links
+      if (result) {
+        expect(result.textContent!.length).toBeLessThan(MIN_CONTENT_LENGTH * 5);
+      }
+    });
+
+    it('joins contentHtmls as content field', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const html = `<html><body><article><p>${content}</p></article></body></html>`;
+      const result = tryTextDensityExtraction(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.content).toBeTruthy();
+      // content field should contain HTML from contentHtmls
+      expect(result!.content).not.toBe(result!.textContent);
     });
   });
 
