@@ -29,7 +29,7 @@ Automatically capture every E2E test run into a local SQLite database to enable 
 
 ### Storage
 
-- **Location:** `lynxget-e2e.db` at project root
+- **Location:** `lynxget-e2e.db` in the main repo root (`~/src/lynxget/lynxget-e2e.db`). When running E2E from a git worktree, symlink the worktree's db path to the main repo to keep a single database.
 - **Technology:** SQLite (file-based, no external dependencies)
 - **Git ignore:** Add `lynxget-e2e.db` to `.gitignore` (local data only)
 
