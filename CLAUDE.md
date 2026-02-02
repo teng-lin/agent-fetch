@@ -33,6 +33,14 @@ npm run lint && npm run format:check && npm run test && npm run build
 
 All four must pass. Do not create a PR with failing checks.
 
+## Worktree Workflow
+
+After creating a git worktree for feature work, **immediately `cd` to the worktree directory** before running any commands or making changes. This ensures you're working in the correct isolated context, not the main repository.
+
+```bash
+cd .worktrees/<worktree-name>
+```
+
 ## Project Structure
 
 ```
