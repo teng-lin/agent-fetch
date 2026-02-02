@@ -554,8 +554,10 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
 
   // Config-driven: JSON-LD preferred sites get early return
   const preferJsonLd = sitePreferJsonLd(url);
+  let jsonLdResult: ExtractionResult | null = null;
+
   if (preferJsonLd) {
-    const jsonLdResult = tryJsonLdExtraction(document, url);
+    jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
       return jsonLdResult;
@@ -567,7 +569,9 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
 
   // Run all strategies
   const readabilityResult = tryReadability(document, url);
-  const jsonLdResult = preferJsonLd ? null : tryJsonLdExtraction(document, url);
+  if (!preferJsonLd) {
+    jsonLdResult = tryJsonLdExtraction(document, url);
+  }
   const selectorResult = trySelectorExtraction(document, url);
   const textDensityResult = tryTextDensityExtraction(html, url);
   const unfluffResult = tryUnfluffExtraction(html, url);
