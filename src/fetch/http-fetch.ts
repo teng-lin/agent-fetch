@@ -4,6 +4,7 @@
 import { httpRequest } from './http-client.js';
 import { quickValidate } from './content-validator.js';
 import { extractFromHtml } from '../extract/content-extractors.js';
+import { fetchFromArchives } from './archive-fallback.js';
 import { detectFromResponse, detectFromHtml, mergeDetections } from '../antibot/detector.js';
 import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
 import { logger } from '../logger.js';
@@ -26,6 +27,14 @@ const VALIDATION_ERROR_HINTS: Partial<Record<ValidationError, string>> = {
 const RECOVERABLE_VALIDATION_ERRORS = new Set<ValidationError>([
   'challenge_detected',
   'access_restricted',
+]);
+
+// Errors that should trigger archive fallback
+const ARCHIVE_FALLBACK_ERRORS = new Set<ValidationError | 'extraction_failed'>([
+  'challenge_detected',
+  'access_restricted',
+  'insufficient_content',
+  'extraction_failed',
 ]);
 
 /** Build a failure result with common fields pre-filled. */
@@ -67,6 +76,47 @@ function successResult(
     lang: extracted.lang ?? undefined,
     antibot,
   };
+}
+
+/** Check whether an extraction result has enough text content to be useful. */
+function hasEnoughContent(extracted: ExtractionResult | null): extracted is ExtractionResult {
+  return !!extracted?.textContent && extracted.textContent.trim().length >= MIN_CONTENT_LENGTH;
+}
+
+/**
+ * Try fetching from archive services and extracting content.
+ * Returns a success FetchResult if archive content is sufficient, null otherwise.
+ */
+async function tryArchiveFallback(
+  url: string,
+  startTime: number,
+  antibot?: AntibotDetection[]
+): Promise<FetchResult | null> {
+  try {
+    const archive = await fetchFromArchives(url);
+    if (!archive.success || !archive.html) return null;
+
+    const extracted = extractFromHtml(archive.html, url);
+    if (!hasEnoughContent(extracted)) return null;
+
+    logger.info(
+      { url, archiveUrl: archive.archiveUrl, method: extracted.method },
+      'Recovered content from archive'
+    );
+
+    extracted.archiveUrl = archive.archiveUrl;
+
+    return {
+      ...successResult(url, startTime, extracted, antibot),
+      archiveUrl: archive.archiveUrl,
+      statusCode: null,
+      rawHtml: null,
+      extractionMethod: extracted.method ?? null,
+    };
+  } catch (error) {
+    logger.debug({ url, error: String(error) }, 'Archive fallback failed');
+    return null;
+  }
 }
 
 /**
@@ -174,7 +224,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
             'Validation flagged issue, attempting extraction anyway'
           );
           const recovered = extractFromHtml(response.html, url);
-          if (recovered?.textContent && recovered.textContent.trim().length >= MIN_CONTENT_LENGTH) {
+          if (hasEnoughContent(recovered)) {
             logger.info(
               { url, method: recovered.method },
               'Recovered content despite validation warning'
@@ -184,6 +234,12 @@ export async function httpFetch(url: string): Promise<FetchResult> {
         } catch (e) {
           logger.debug({ url, error: String(e) }, 'Recovery extraction failed');
         }
+      }
+
+      // Try archive fallback for recoverable validation errors
+      if (ARCHIVE_FALLBACK_ERRORS.has(validation.error!)) {
+        const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
+        if (archiveResult) return archiveResult;
       }
 
       return failResult(
@@ -206,6 +262,10 @@ export async function httpFetch(url: string): Promise<FetchResult> {
     const extracted = extractFromHtml(response.html, url);
 
     if (!extracted) {
+      // Try archive fallback when extraction returns null
+      const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
+      if (archiveResult) return archiveResult;
+
       return failResult(
         url,
         startTime,
@@ -222,6 +282,10 @@ export async function httpFetch(url: string): Promise<FetchResult> {
 
     // Handle insufficient extracted content
     if (!extracted.textContent || extracted.textContent.trim().length < MIN_CONTENT_LENGTH) {
+      // Try archive fallback for insufficient content
+      const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
+      if (archiveResult) return archiveResult;
+
       const wordCount = extracted.textContent ? extracted.textContent.split(/\s+/).length : 0;
       return failResult(
         url,
@@ -241,18 +305,8 @@ export async function httpFetch(url: string): Promise<FetchResult> {
     logger.info({ url, latencyMs }, 'HTTP fetch succeeded');
 
     return {
-      success: true,
-      url,
+      ...successResult(url, startTime, extracted, antibotField),
       latencyMs,
-      title: extracted.title ?? undefined,
-      byline: extracted.byline ?? undefined,
-      content: extracted.content ?? undefined,
-      textContent: extracted.textContent ?? undefined,
-      excerpt: extracted.excerpt ?? undefined,
-      siteName: extracted.siteName ?? undefined,
-      publishedTime: extracted.publishedTime ?? undefined,
-      lang: extracted.lang ?? undefined,
-      antibot: antibotField,
       statusCode: response.statusCode,
       rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
       extractionMethod: extracted.method ?? null,

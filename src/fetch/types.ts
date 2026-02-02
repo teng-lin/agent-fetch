@@ -52,6 +52,9 @@ export interface FetchResult {
   // Antibot detection
   antibot?: AntibotDetection[];
 
+  // Archive fallback
+  archiveUrl?: string; // Source URL when content was recovered from an archive service
+
   // E2E recording fields
   statusCode?: number | null; // HTTP response status (200, 403, 429, etc.)
   rawHtml?: string | null; // Raw HTML response body
