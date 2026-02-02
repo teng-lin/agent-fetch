@@ -20,9 +20,15 @@ vi.mock('../sites/site-config.js', () => ({
   getSiteReferer: vi.fn(),
 }));
 
+vi.mock('../fetch/archive-fallback.js', () => ({
+  fetchFromArchives: vi.fn().mockResolvedValue({ success: false }),
+}));
+
 vi.mock('../logger.js', () => ({
   logger: {
     info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
     error: vi.fn(),
   },
 }));
@@ -31,6 +37,7 @@ import { httpRequest } from '../fetch/http-client.js';
 import { quickValidate } from '../fetch/content-validator.js';
 import { extractFromHtml } from '../extract/content-extractors.js';
 import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
+import { fetchFromArchives } from '../fetch/archive-fallback.js';
 
 describe('httpFetch', () => {
   beforeEach(() => {
@@ -483,5 +490,275 @@ describe('httpFetch', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('dns_rebinding_detected');
+  });
+
+  describe('archive fallback', () => {
+    it('recovers from challenge page via archive when direct extraction fails', async () => {
+      const url = 'https://example.com/article';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: '<html><body><div class="cf-turnstile"></div></body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValue({
+        valid: false,
+        error: 'challenge_detected',
+        errorDetails: { challengeType: 'cloudflare_turnstile' },
+      });
+
+      // Direct extraction fails
+      vi.mocked(extractFromHtml)
+        .mockReturnValueOnce(null)
+        // Archive extraction succeeds
+        .mockReturnValueOnce({
+          title: 'Archived Article',
+          byline: 'Author',
+          content: '<p>Full archived content</p>',
+          textContent: 'Full archived content. '.repeat(20),
+          excerpt: 'Full archived content.',
+          siteName: 'Example',
+          publishedTime: null,
+          lang: 'en',
+          method: 'readability',
+        });
+
+      vi.mocked(fetchFromArchives).mockResolvedValueOnce({
+        success: true,
+        html: '<html><body><p>Full archived content</p></body></html>',
+        archiveUrl: 'https://web.archive.org/web/2if_/https://example.com/article',
+      });
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.title).toBe('Archived Article');
+      expect(result.archiveUrl).toBe(
+        'https://web.archive.org/web/2if_/https://example.com/article'
+      );
+      expect(fetchFromArchives).toHaveBeenCalledWith(url);
+    });
+
+    it('does not try archive for 404 errors', async () => {
+      const url = 'https://example.com/missing';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: false,
+        statusCode: 404,
+        headers: {},
+        cookies: [],
+        error: 'not_found',
+      });
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('not_found');
+      expect(fetchFromArchives).not.toHaveBeenCalled();
+    });
+
+    it('returns original error when archive also fails', async () => {
+      const url = 'https://example.com/article';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: '<html><body>Content</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValue(null);
+      vi.mocked(fetchFromArchives).mockResolvedValueOnce({ success: false });
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('extraction_failed');
+      expect(fetchFromArchives).toHaveBeenCalledWith(url);
+    });
+
+    it('recovers from insufficient content via archive', async () => {
+      const url = 'https://example.com/article';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: '<html><body>Short</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+      // Direct extraction returns insufficient content
+      vi.mocked(extractFromHtml)
+        .mockReturnValueOnce({
+          title: 'Test',
+          byline: null,
+          content: null,
+          textContent: 'Short',
+          excerpt: null,
+          siteName: null,
+          publishedTime: null,
+          lang: null,
+          method: 'readability',
+        })
+        // Archive extraction succeeds
+        .mockReturnValueOnce({
+          title: 'Archived Article',
+          byline: null,
+          content: '<p>Full content from archive</p>',
+          textContent: 'Full content from archive. '.repeat(20),
+          excerpt: null,
+          siteName: null,
+          publishedTime: null,
+          lang: 'en',
+          method: 'readability',
+        });
+
+      vi.mocked(fetchFromArchives).mockResolvedValueOnce({
+        success: true,
+        html: '<html><body><p>Full content from archive</p></body></html>',
+        archiveUrl: 'https://archive.is/latest/https://example.com/article',
+      });
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.title).toBe('Archived Article');
+      expect(fetchFromArchives).toHaveBeenCalledWith(url);
+    });
+
+    it('tries archive on 403 HTTP error', async () => {
+      const url = 'https://example.com/paywalled';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: false,
+        statusCode: 403,
+        headers: {},
+        cookies: [],
+        error: 'forbidden',
+      });
+
+      vi.mocked(extractFromHtml).mockReturnValueOnce({
+        title: 'Archived Paywall Article',
+        byline: null,
+        content: '<p>Full archived content</p>',
+        textContent: 'Full archived content from wayback. '.repeat(20),
+        excerpt: null,
+        siteName: null,
+        publishedTime: null,
+        lang: 'en',
+        method: 'readability',
+      });
+
+      vi.mocked(fetchFromArchives).mockResolvedValueOnce({
+        success: true,
+        html: '<html><body><p>Full archived content</p></body></html>',
+        archiveUrl: 'https://web.archive.org/web/2if_/https://example.com/paywalled',
+      });
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.title).toBe('Archived Paywall Article');
+      expect(result.archiveUrl).toBe(
+        'https://web.archive.org/web/2if_/https://example.com/paywalled'
+      );
+      expect(fetchFromArchives).toHaveBeenCalledWith(url);
+    });
+
+    it('tries archive when extraction succeeds but word count is low', async () => {
+      const url = 'https://example.com/teaser';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: '<html><body>Short teaser</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+      // Direct extraction returns valid but short content (< 100 words, > 100 chars)
+      vi.mocked(extractFromHtml)
+        .mockReturnValueOnce({
+          title: 'Teaser',
+          byline: null,
+          content: '<p>Subscribe to read more about this topic.</p>',
+          textContent: 'Subscribe to read more about this very interesting topic. '.repeat(3),
+          excerpt: null,
+          siteName: null,
+          publishedTime: null,
+          lang: 'en',
+          method: 'readability',
+        })
+        // Archive extraction succeeds with full content
+        .mockReturnValueOnce({
+          title: 'Full Article',
+          byline: 'Author',
+          content: '<p>Full article from archive</p>',
+          textContent: 'Full article from archive with much more content. '.repeat(20),
+          excerpt: null,
+          siteName: null,
+          publishedTime: null,
+          lang: 'en',
+          method: 'readability',
+        });
+
+      vi.mocked(fetchFromArchives).mockResolvedValueOnce({
+        success: true,
+        html: '<html><body><p>Full article from archive</p></body></html>',
+        archiveUrl: 'https://web.archive.org/web/2if_/https://example.com/teaser',
+      });
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.title).toBe('Full Article');
+      expect(result.archiveUrl).toBe('https://web.archive.org/web/2if_/https://example.com/teaser');
+      expect(fetchFromArchives).toHaveBeenCalledWith(url);
+    });
+
+    it('keeps direct result when word count is low but archive also fails', async () => {
+      const url = 'https://example.com/teaser';
+
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: '<html><body>Short teaser</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+      vi.mocked(extractFromHtml).mockReturnValueOnce({
+        title: 'Teaser',
+        byline: null,
+        content: '<p>Short teaser content.</p>',
+        textContent: 'Short teaser content about an interesting topic here. '.repeat(3),
+        excerpt: null,
+        siteName: null,
+        publishedTime: null,
+        lang: 'en',
+        method: 'readability',
+      });
+
+      vi.mocked(fetchFromArchives).mockResolvedValueOnce({ success: false });
+
+      const result = await httpFetch(url);
+
+      // Should still succeed with the direct extraction result
+      expect(result.success).toBe(true);
+      expect(result.title).toBe('Teaser');
+      expect(result.archiveUrl).toBeUndefined();
+    });
   });
 });

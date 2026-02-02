@@ -4,5 +4,7 @@
 export { httpFetch } from './http-fetch.js';
 export { getSession, closeAllSessions, httpRequest } from './http-client.js';
 export { quickValidate } from './content-validator.js';
+export { fetchFromWayback, fetchFromArchiveIs, fetchFromArchives } from './archive-fallback.js';
+export type { ArchiveFetchResult } from './archive-fallback.js';
 export type { FetchResult, ValidationResult, ValidationError } from './types.js';
 export type { HttpResponse } from './http-client.js';
