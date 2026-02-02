@@ -11,37 +11,7 @@
  * Uses sql.js (pure JavaScript SQLite) for cross-platform compatibility
  */
 
-import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
-import { readFileSync, existsSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../../');
-const DB_PATH = path.join(PROJECT_ROOT, 'lynxget-e2e.db');
-
-let sqlJsInstance: any = null;
-
-/**
- * Load database from disk using sql.js
- */
-async function loadDatabase(): Promise<SqlJsDatabase | null> {
-  try {
-    if (!sqlJsInstance) {
-      sqlJsInstance = await initSqlJs();
-    }
-
-    if (!existsSync(DB_PATH)) {
-      return null;
-    }
-
-    const buffer = readFileSync(DB_PATH);
-    return new sqlJsInstance.Database(buffer);
-  } catch (err) {
-    console.error('Failed to load database:', err);
-    return null;
-  }
-}
+import { loadDatabase } from './db-utils.js';
 
 interface SuccessRateBySite {
   site: string;
