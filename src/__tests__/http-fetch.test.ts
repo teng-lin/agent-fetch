@@ -186,7 +186,7 @@ describe('httpFetch', () => {
     expect(result.errorDetails?.statusCode).toBe(404);
   });
 
-  it('returns retry_with_extract for challenge detection', async () => {
+  it('returns retry_with_extract for challenge detection when extraction fails', async () => {
     const url = 'https://example.com/article';
     const mockHtml = '<html><body><div class="cf-turnstile"></div></body></html>';
 
@@ -204,6 +204,9 @@ describe('httpFetch', () => {
       errorDetails: { challengeType: 'cloudflare_turnstile' },
     });
 
+    // Extraction also fails — no content to recover
+    vi.mocked(extractFromHtml).mockReturnValue(null);
+
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
@@ -212,7 +215,47 @@ describe('httpFetch', () => {
     expect(result.hint).toBe('This site uses anti-bot challenges');
   });
 
-  it('returns retry_with_extract for access gate detection', async () => {
+  it('recovers content from challenge page when extraction succeeds', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml =
+      '<html><body><div class="cf-turnstile"></div><article>Full article...</article></body></html>';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({
+      valid: false,
+      error: 'challenge_detected',
+      errorDetails: { challengeType: 'cloudflare_turnstile' },
+    });
+
+    // Extraction succeeds — full article content is present
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Recovered Article',
+      byline: 'Author',
+      content: '<article>Full article...</article>',
+      textContent: 'Full article content. '.repeat(20),
+      excerpt: 'Full article content.',
+      siteName: 'Example',
+      publishedTime: '2024-01-01',
+      lang: 'en',
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Recovered Article');
+    expect(result.textContent!.length).toBeGreaterThan(100);
+    expect(extractFromHtml).toHaveBeenCalledWith(mockHtml, url);
+  });
+
+  it('returns retry_with_extract for access gate when extraction fails', async () => {
     const url = 'https://example.com/article';
     const mockHtml = '<html><body>Subscribe now</body></html>';
 
@@ -230,12 +273,52 @@ describe('httpFetch', () => {
       errorDetails: { wordCount: 50 },
     });
 
+    // Extraction also fails
+    vi.mocked(extractFromHtml).mockReturnValue(null);
+
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('access_restricted');
     expect(result.suggestedAction).toBe('retry_with_extract');
     expect(result.hint).toBe('This site has an access gate');
+  });
+
+  it('recovers content from access-gated page when extraction succeeds', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Subscribe now<article>Full article...</article></body></html>';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: mockHtml,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({
+      valid: false,
+      error: 'access_restricted',
+      errorDetails: { wordCount: 50 },
+    });
+
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Gated Article',
+      byline: null,
+      content: '<article>Full article...</article>',
+      textContent: 'Full article content behind gate. '.repeat(10),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Gated Article');
+    expect(result.textContent!.length).toBeGreaterThan(100);
   });
 
   it('returns skip for insufficient content', async () => {
