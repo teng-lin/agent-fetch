@@ -134,29 +134,53 @@ export function generateExcerpt(excerpt: string | null, textContent: string | nu
 
 /**
  * Strategy 1: Extract using Mozilla Readability
+ * Tries strict mode first, then retries with charThreshold: 100 for unusual DOM structures.
  */
 export function tryReadability(document: Document, url: string): ExtractionResult | null {
   try {
-    // Clone document since Readability modifies it
+    // Strict pass (default charThreshold of 500)
     const clone = document.cloneNode(true) as Document;
     const reader = new Readability(clone);
     const article = reader.parse();
 
-    if (!article || !article.textContent || article.textContent.length < MIN_CONTENT_LENGTH) {
-      return null;
+    if (article?.textContent && article.textContent.length >= MIN_CONTENT_LENGTH) {
+      return {
+        title: article.title ?? extractTitle(document),
+        byline: article.byline ?? null,
+        content: article.content ?? null,
+        textContent: article.textContent ?? null,
+        excerpt: generateExcerpt(article.excerpt ?? null, article.textContent ?? null),
+        siteName: article.siteName ?? extractSiteName(document),
+        publishedTime: extractPublishedTime(document) ?? article.publishedTime ?? null,
+        lang: article.lang ?? null,
+        method: 'readability',
+      };
     }
 
-    return {
-      title: article.title ?? extractTitle(document),
-      byline: article.byline ?? null,
-      content: article.content ?? null,
-      textContent: article.textContent ?? null,
-      excerpt: generateExcerpt(article.excerpt ?? null, article.textContent ?? null),
-      siteName: article.siteName ?? extractSiteName(document),
-      publishedTime: extractPublishedTime(document) ?? article.publishedTime ?? null,
-      lang: article.lang ?? null,
-      method: 'readability',
-    };
+    // Relaxed pass — lower charThreshold to catch unusual DOM structures
+    const relaxedClone = document.cloneNode(true) as Document;
+    const relaxedReader = new Readability(relaxedClone, { charThreshold: 100 });
+    const relaxedArticle = relaxedReader.parse();
+
+    if (relaxedArticle?.textContent && relaxedArticle.textContent.length >= MIN_CONTENT_LENGTH) {
+      logger.debug({ url }, 'Readability relaxed pass succeeded');
+      return {
+        title: relaxedArticle.title ?? extractTitle(document),
+        byline: relaxedArticle.byline ?? null,
+        content: relaxedArticle.content ?? null,
+        textContent: relaxedArticle.textContent ?? null,
+        excerpt: generateExcerpt(
+          relaxedArticle.excerpt ?? null,
+          relaxedArticle.textContent ?? null
+        ),
+        siteName: relaxedArticle.siteName ?? extractSiteName(document),
+        publishedTime: extractPublishedTime(document) ?? relaxedArticle.publishedTime ?? null,
+        lang: relaxedArticle.lang ?? null,
+        method: 'readability-relaxed',
+      };
+    }
+
+    return null;
   } catch (e) {
     logger.debug({ url, error: String(e) }, 'Readability extraction failed');
     return null;
