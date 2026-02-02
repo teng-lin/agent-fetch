@@ -33,11 +33,10 @@ const RECOVERABLE_VALIDATION_ERRORS = new Set<ValidationError>([
 ]);
 
 // Errors that should trigger archive fallback
-const ARCHIVE_FALLBACK_ERRORS = new Set<ValidationError | 'extraction_failed'>([
+const ARCHIVE_FALLBACK_ERRORS = new Set<ValidationError>([
   'challenge_detected',
   'access_restricted',
   'insufficient_content',
-  'extraction_failed',
 ]);
 
 /** Build a failure result with common fields pre-filled. */
@@ -106,8 +105,6 @@ async function tryArchiveFallback(
       { url, archiveUrl: archive.archiveUrl, method: extracted.method },
       'Recovered content from archive'
     );
-
-    extracted.archiveUrl = archive.archiveUrl;
 
     return {
       ...successResult(url, startTime, extracted, antibot),
