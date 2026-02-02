@@ -58,6 +58,9 @@ const REMOVE_SELECTORS = [
   '.comments',
 ];
 
+/** Minimum length ratio for text-density to override Readability */
+const COMPARATOR_LENGTH_RATIO = 2;
+
 /** JSON-LD article types that contain extractable content */
 const ARTICLE_TYPES = [
   'Article',
@@ -133,30 +136,56 @@ export function generateExcerpt(excerpt: string | null, textContent: string | nu
 }
 
 /**
+ * Build an ExtractionResult from a Readability article and the original document.
+ */
+function buildReadabilityResult(
+  article: ReturnType<Readability<string>['parse']>,
+  document: Document,
+  method: string
+): ExtractionResult | null {
+  if (!article?.textContent || article.textContent.length < MIN_CONTENT_LENGTH) {
+    return null;
+  }
+
+  return {
+    title: article.title ?? extractTitle(document),
+    byline: article.byline ?? null,
+    content: article.content ?? null,
+    textContent: article.textContent ?? null,
+    excerpt: generateExcerpt(article.excerpt ?? null, article.textContent ?? null),
+    siteName: article.siteName ?? extractSiteName(document),
+    publishedTime: extractPublishedTime(document) ?? article.publishedTime ?? null,
+    lang: article.lang ?? null,
+    method,
+  };
+}
+
+/**
  * Strategy 1: Extract using Mozilla Readability
+ * Tries strict mode first, then retries with charThreshold: 100 for unusual DOM structures.
  */
 export function tryReadability(document: Document, url: string): ExtractionResult | null {
   try {
-    // Clone document since Readability modifies it
+    // Strict pass (default charThreshold of 500)
     const clone = document.cloneNode(true) as Document;
-    const reader = new Readability(clone);
-    const article = reader.parse();
+    const strictResult = buildReadabilityResult(
+      new Readability(clone).parse(),
+      document,
+      'readability'
+    );
+    if (strictResult) return strictResult;
 
-    if (!article || !article.textContent || article.textContent.length < MIN_CONTENT_LENGTH) {
-      return null;
+    // Relaxed pass — lower charThreshold to catch unusual DOM structures
+    const relaxedClone = document.cloneNode(true) as Document;
+    const relaxedResult = buildReadabilityResult(
+      new Readability(relaxedClone, { charThreshold: 100 }).parse(),
+      document,
+      'readability-relaxed'
+    );
+    if (relaxedResult) {
+      logger.debug({ url }, 'Readability relaxed pass succeeded');
     }
-
-    return {
-      title: article.title ?? extractTitle(document),
-      byline: article.byline ?? null,
-      content: article.content ?? null,
-      textContent: article.textContent ?? null,
-      excerpt: generateExcerpt(article.excerpt ?? null, article.textContent ?? null),
-      siteName: article.siteName ?? extractSiteName(document),
-      publishedTime: extractPublishedTime(document) ?? article.publishedTime ?? null,
-      lang: article.lang ?? null,
-      method: 'readability',
-    };
+    return relaxedResult;
   } catch (e) {
     logger.debug({ url, error: String(e) }, 'Readability extraction failed');
     return null;
@@ -222,58 +251,66 @@ function extractAuthorFromJsonLd(authorData: unknown): string | null {
 }
 
 /**
+ * Flatten a parsed JSON-LD blob into a list of individual items.
+ * Handles top-level arrays and @graph structures.
+ */
+function flattenJsonLdItems(data: unknown): Record<string, unknown>[] {
+  if (!data || typeof data !== 'object') return [];
+  if (Array.isArray(data)) return data.flatMap(flattenJsonLdItems);
+
+  const obj = data as Record<string, unknown>;
+  if (Array.isArray(obj['@graph'])) return obj['@graph'].flatMap(flattenJsonLdItems);
+
+  return [obj];
+}
+
+/**
+ * Check whether a JSON-LD item is a recognized article type.
+ */
+function isArticleType(item: Record<string, unknown>): boolean {
+  const itemType = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
+  return (
+    typeof itemType === 'string' &&
+    ARTICLE_TYPES.includes(itemType as (typeof ARTICLE_TYPES)[number])
+  );
+}
+
+/**
  * Parse a single JSON-LD item to extract article content
  */
 function parseJsonLdItem(
-  data: unknown
+  item: Record<string, unknown>
 ): Omit<ExtractionResult, 'method' | 'lang' | 'siteName' | 'publishedTime'> | null {
-  if (!data || typeof data !== 'object') return null;
+  if (!isArticleType(item)) return null;
 
-  // Handle arrays and @graph structure
-  if (Array.isArray(data)) {
-    return findFirstJsonLdResult(data);
-  }
-
-  const obj = data as Record<string, unknown>;
-
-  if (Array.isArray(obj['@graph'])) {
-    return findFirstJsonLdResult(obj['@graph']);
-  }
-
-  // Check if this is an article type
-  const itemType = Array.isArray(obj['@type']) ? obj['@type'][0] : obj['@type'];
-  if (
-    typeof itemType !== 'string' ||
-    !ARTICLE_TYPES.includes(itemType as (typeof ARTICLE_TYPES)[number])
-  ) {
-    return null;
-  }
-
-  // Extract content
   const content =
-    (obj.articleBody as string) ?? (obj.text as string) ?? (obj.description as string);
+    (item.articleBody as string) ?? (item.text as string) ?? (item.description as string);
   if (!content) return null;
 
   return {
-    title: (obj.headline as string) ?? (obj.name as string) ?? null,
-    byline: extractAuthorFromJsonLd(obj.author),
+    title: (item.headline as string) ?? (item.name as string) ?? null,
+    byline: extractAuthorFromJsonLd(item.author),
     content,
     textContent: content,
-    excerpt: (obj.description as string) ?? null,
+    excerpt: (item.description as string) ?? null,
   };
 }
 
 /**
- * Find first valid result by recursively parsing JSON-LD items
+ * Parse all JSON-LD script tags and return flattened article-candidate items.
  */
-function findFirstJsonLdResult(
-  items: unknown[]
-): Omit<ExtractionResult, 'method' | 'lang' | 'siteName' | 'publishedTime'> | null {
-  for (const item of items) {
-    const result = parseJsonLdItem(item);
-    if (result) return result;
+function parseJsonLdScripts(document: Document): Record<string, unknown>[] {
+  const items: Record<string, unknown>[] = [];
+  const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of scripts) {
+    try {
+      const data = JSON.parse(script.textContent ?? '');
+      items.push(...flattenJsonLdItems(data));
+    } catch {
+      // Skip malformed JSON
+    }
   }
-  return null;
+  return items;
 }
 
 /**
@@ -281,24 +318,16 @@ function findFirstJsonLdResult(
  */
 export function tryJsonLdExtraction(document: Document, url: string): ExtractionResult | null {
   try {
-    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-
-    for (const script of scripts) {
-      try {
-        const data = JSON.parse(script.textContent ?? '');
-        const article = parseJsonLdItem(data);
-
-        if (article && article.content && article.content.length >= MIN_CONTENT_LENGTH) {
-          return {
-            ...article,
-            siteName: extractSiteName(document),
-            publishedTime: extractPublishedTime(document),
-            lang: document.documentElement.lang || null,
-            method: 'json-ld',
-          };
-        }
-      } catch {
-        // Continue to next script
+    for (const item of parseJsonLdScripts(document)) {
+      const article = parseJsonLdItem(item);
+      if (article?.content && article.content.length >= MIN_CONTENT_LENGTH) {
+        return {
+          ...article,
+          siteName: extractSiteName(document),
+          publishedTime: extractPublishedTime(document),
+          lang: document.documentElement.lang || null,
+          method: 'json-ld',
+        };
       }
     }
   } catch (e) {
@@ -306,6 +335,59 @@ export function tryJsonLdExtraction(document: Document, url: string): Extraction
   }
 
   return null;
+}
+
+interface JsonLdMetadata {
+  byline: string | null;
+  publishedTime: string | null;
+}
+
+/**
+ * Extract metadata-only fields from JSON-LD (author, dates).
+ * Unlike tryJsonLdExtraction, this does NOT require articleBody to meet content threshold.
+ * Used for metadata composition when another strategy wins for content.
+ */
+function extractJsonLdMetadata(document: Document): JsonLdMetadata | null {
+  for (const item of parseJsonLdScripts(document)) {
+    if (!isArticleType(item)) continue;
+
+    const byline = extractAuthorFromJsonLd(item.author);
+    const publishedTime = (item.datePublished as string) ?? (item.dateCreated as string) ?? null;
+    if (byline || publishedTime) {
+      return { byline, publishedTime };
+    }
+  }
+  return null;
+}
+
+/**
+ * Compose best metadata from multiple extraction results and JSON-LD metadata.
+ * Supplements missing metadata fields on the winner from other sources.
+ */
+function composeMetadata(
+  winner: ExtractionResult,
+  candidates: (ExtractionResult | null)[],
+  jsonLdMeta: JsonLdMetadata | null
+): ExtractionResult {
+  const composed = { ...winner };
+
+  // First try JSON-LD metadata (richest structured source)
+  if (jsonLdMeta) {
+    if (!composed.byline && jsonLdMeta.byline) composed.byline = jsonLdMeta.byline;
+    if (!composed.publishedTime && jsonLdMeta.publishedTime)
+      composed.publishedTime = jsonLdMeta.publishedTime;
+  }
+
+  // Then try other extraction results
+  for (const candidate of candidates) {
+    if (!candidate || candidate === winner) continue;
+    if (!composed.byline && candidate.byline) composed.byline = candidate.byline;
+    if (!composed.publishedTime && candidate.publishedTime)
+      composed.publishedTime = candidate.publishedTime;
+    if (!composed.siteName && candidate.siteName) composed.siteName = candidate.siteName;
+    if (!composed.lang && candidate.lang) composed.lang = candidate.lang;
+  }
+  return composed;
 }
 
 /**
@@ -459,10 +541,9 @@ export function tryTextDensityExtraction(html: string, url: string): ExtractionR
  * Uses linkedom for DOM parsing (crash-resistant, no CSS parsing errors)
  */
 export function extractFromHtml(html: string, url: string): ExtractionResult | null {
-  // Use linkedom instead of JSDOM - more crash-resistant with malformed HTML
   const { document } = parseHTML(html);
 
-  // Check if this site uses Next.js __NEXT_DATA__ extraction (config-driven)
+  // Config-driven: Next.js early return (these sites have complete metadata)
   if (siteUseNextData(url)) {
     const nextDataResult = tryNextDataExtraction(document, url);
     if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
@@ -471,58 +552,80 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     }
   }
 
-  // Check if this site prefers JSON-LD (full content in structured data)
+  // Config-driven: JSON-LD preferred sites get early return
   const preferJsonLd = sitePreferJsonLd(url);
+  let jsonLdResult: ExtractionResult | null = null;
 
   if (preferJsonLd) {
-    // For sites with full content in JSON-LD, try it first
-    const jsonLdResult = tryJsonLdExtraction(document, url);
+    jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
       return jsonLdResult;
     }
   }
 
-  // Strategy 1: Try Readability first (most reliable for clean content)
+  // Extract JSON-LD metadata for composition (lightweight, no content threshold)
+  const jsonLdMeta = extractJsonLdMetadata(document);
+
+  // Run all strategies
   const readabilityResult = tryReadability(document, url);
-  if (meetsThreshold(readabilityResult, GOOD_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'readability' }, 'Extraction succeeded');
-    return readabilityResult;
+  if (!preferJsonLd) {
+    jsonLdResult = tryJsonLdExtraction(document, url);
   }
-
-  // Strategy 2: Try JSON-LD (structured data, often has full article)
-  const jsonLdResult = preferJsonLd ? null : tryJsonLdExtraction(document, url);
-  if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded');
-    return jsonLdResult;
-  }
-
-  // Strategy 3: Try selector-based extraction
   const selectorResult = trySelectorExtraction(document, url);
-  if (meetsThreshold(selectorResult, MIN_CONTENT_LENGTH)) {
-    logger.debug({ url, method: selectorResult!.method }, 'Extraction succeeded');
-    return selectorResult;
-  }
-
-  // Strategy 4: Try text density analysis (statistical approach, different from heuristic scoring)
   const textDensityResult = tryTextDensityExtraction(html, url);
-  if (meetsThreshold(textDensityResult, MIN_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'text-density' }, 'Extraction succeeded');
-    return textDensityResult;
-  }
-
-  // Strategy 5: Try unfluff (different heuristics, good for unusual HTML)
   const unfluffResult = tryUnfluffExtraction(html, url);
-  if (meetsThreshold(unfluffResult, MIN_CONTENT_LENGTH)) {
-    logger.debug({ url, method: 'unfluff' }, 'Extraction succeeded');
-    return unfluffResult;
+
+  // Comparator: prefer text-density if it found significantly more content
+  // than Readability (>2x length). Catches pages where Readability trims too aggressively.
+  let effectiveReadability: ExtractionResult | null = readabilityResult;
+
+  if (readabilityResult && textDensityResult) {
+    const readLen = readabilityResult.textContent?.length ?? 0;
+    const densityLen = textDensityResult.textContent?.length ?? 0;
+
+    if (densityLen > readLen * COMPARATOR_LENGTH_RATIO && densityLen >= GOOD_CONTENT_LENGTH) {
+      logger.debug(
+        { url, readabilityLen: readLen, textDensityLen: densityLen },
+        'Text-density found significantly more content, preferring it over Readability'
+      );
+      effectiveReadability = null;
+    }
   }
 
-  // Return best partial result if we have one
-  const partialResult =
-    readabilityResult ?? jsonLdResult ?? selectorResult ?? textDensityResult ?? unfluffResult;
-  if (!partialResult) {
-    logger.debug({ url }, 'All extraction strategies failed');
+  // All results for metadata composition (use readabilityResult, not effectiveReadability,
+  // so Readability's metadata remains available even when the comparator prefers text-density)
+  const allResults = [
+    readabilityResult,
+    jsonLdResult,
+    selectorResult,
+    textDensityResult,
+    unfluffResult,
+  ];
+
+  // Pick winner by threshold (same priority order as before)
+  const candidates: [ExtractionResult | null, number][] = [
+    [effectiveReadability, GOOD_CONTENT_LENGTH],
+    [jsonLdResult, GOOD_CONTENT_LENGTH],
+    [selectorResult, MIN_CONTENT_LENGTH],
+    [textDensityResult, MIN_CONTENT_LENGTH],
+    [unfluffResult, MIN_CONTENT_LENGTH],
+  ];
+
+  for (const [result, threshold] of candidates) {
+    if (meetsThreshold(result, threshold)) {
+      logger.debug({ url, method: result!.method }, 'Extraction succeeded');
+      return composeMetadata(result!, allResults, jsonLdMeta);
+    }
   }
-  return partialResult;
+
+  // Return best partial result with composition
+  const partialResult =
+    effectiveReadability ?? jsonLdResult ?? selectorResult ?? textDensityResult ?? unfluffResult;
+  if (partialResult) {
+    return composeMetadata(partialResult, allResults, jsonLdMeta);
+  }
+
+  logger.debug({ url }, 'All extraction strategies failed');
+  return null;
 }

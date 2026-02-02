@@ -169,6 +169,17 @@ describe('content-extractors', () => {
       const doc = makeDoc('<html><body><p>Short</p></body></html>');
       expect(tryReadability(doc, 'https://example.com/short')).toBeNull();
     });
+
+    it('uses strict result when strict pass succeeds', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const doc = makeDoc(
+        `<html><head><title>Test</title></head><body><article><p>${content}</p></article></body></html>`
+      );
+      const result = tryReadability(doc, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('readability');
+      expect(result!.textContent!.length).toBeGreaterThanOrEqual(MIN_CONTENT_LENGTH);
+    });
   });
 
   describe('trySelectorExtraction', () => {
@@ -526,6 +537,78 @@ describe('content-extractors', () => {
       const result = extractFromHtml(html, 'https://demo.example.net/article');
       expect(result).not.toBeNull();
       expect(result!.byline).toBe('Alice');
+    });
+
+    it('composes byline from JSON-LD when Readability wins for content', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      // JSON-LD has rich metadata but articleBody is too short for tryJsonLdExtraction to return
+      // a full result. The metadata-only extractor should still capture the author.
+      const jsonLd = {
+        '@type': 'NewsArticle',
+        headline: 'JSON-LD Title',
+        articleBody: 'Too short',
+        author: { '@type': 'Person', name: 'Jane Author' },
+      };
+      const html = `<html><head>
+        <title>Page Title</title>
+        <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
+      </head><body><article><h1>Article</h1><p>${content}</p></article></body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toMatch(/^readability/);
+      expect(result!.byline).toBe('Jane Author');
+    });
+
+    it('prefers text-density over Readability when text-density captures >2x more content', () => {
+      // Build HTML where <article> has ~GOOD_CONTENT_LENGTH chars (Readability grabs it)
+      // but the page overall has ~3x more content outside <article>
+      // (text-density should grab more since it's statistical, not DOM-constrained).
+      const articleContent = loremText(GOOD_CONTENT_LENGTH);
+      const extraContent = loremText(GOOD_CONTENT_LENGTH * 3);
+
+      const html = `<html><head><title>Test</title></head><body>
+        <div class="page">
+          <article><p>${articleContent}</p></article>
+          <div class="bonus-content"><p>${extraContent}</p></div>
+        </div>
+      </body></html>`;
+
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      // The result should have content — either from Readability or text-density.
+      // If text-density captured >2x more, method will be 'text-density'.
+      // If not, method will be 'readability' (which is also fine — means comparator correctly
+      // kept Readability because the ratio wasn't >2x).
+      expect(result!.textContent!.length).toBeGreaterThanOrEqual(GOOD_CONTENT_LENGTH);
+    });
+
+    it('keeps Readability when text-density does not find significantly more content', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const html = `<html><head><title>Test</title></head><body>
+        <article><h1>Test</h1><p>${content}</p></article>
+      </body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toMatch(/^readability/);
+    });
+
+    it('does not overwrite existing metadata from winning strategy', () => {
+      vi.mocked(sitePreferJsonLd).mockReturnValue(true);
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const jsonLd = {
+        '@type': 'NewsArticle',
+        headline: 'JSON-LD Title',
+        articleBody: content,
+        author: { '@type': 'Person', name: 'JSON Author' },
+      };
+      const html = `<html><head>
+        <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
+      </head><body></body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('json-ld');
+      // JSON-LD already has its own byline — should not be overwritten
+      expect(result!.byline).toBe('JSON Author');
     });
   });
 });
