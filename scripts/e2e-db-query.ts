@@ -1,318 +1,161 @@
+#!/usr/bin/env tsx
+
 /**
- * CLI tool for querying E2E database analysis
- *
- * Usage examples:
- *   npm run e2e:db:query -- --stats
- *   npm run e2e:db:query -- --site example.com
- *   npm run e2e:db:query -- --commit abc123def
- *   npm run e2e:db:query -- --failed
- *   npm run e2e:db:query -- --since "2026-01-25"
+ * E2E Database Query Tool
+ * Usage: tsx scripts/e2e-db-query.ts [--stats | --overall | --runs]
  */
 
-import {
-  getSuccessRateBySite,
-  getRunsByCommit,
-  getRunsBySite,
-  getFailedRuns,
-  getRunsSince,
-  getOverallStats,
-} from '../src/__tests__/db-query.js';
+import { getUrlStats, getOverallStats, getTestRuns } from '../src/__tests__/db-query.js';
 
 interface ParsedArgs {
   stats?: boolean;
-  site?: string;
-  commit?: string;
-  failed?: boolean;
-  since?: string;
-  help?: boolean;
+  overall?: boolean;
+  runs?: boolean;
 }
 
-function parseArgs(): ParsedArgs {
-  const args: ParsedArgs = {};
+function parseArgs(args: string[]): ParsedArgs {
+  const parsed: ParsedArgs = {};
 
-  for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-
-    if (arg === '--stats') {
-      args.stats = true;
-    } else if (arg === '--site' && i + 1 < process.argv.length) {
-      args.site = process.argv[++i];
-    } else if (arg === '--commit' && i + 1 < process.argv.length) {
-      args.commit = process.argv[++i];
-    } else if (arg === '--failed') {
-      args.failed = true;
-    } else if (arg === '--since' && i + 1 < process.argv.length) {
-      args.since = process.argv[++i];
-    } else if (arg === '--help' || arg === '-h') {
-      args.help = true;
-    }
+  for (const arg of args) {
+    if (arg === '--stats') parsed.stats = true;
+    else if (arg === '--overall') parsed.overall = true;
+    else if (arg === '--runs') parsed.runs = true;
   }
 
-  return args;
+  return parsed;
 }
 
 function showUsage(): void {
-  console.log(`
-E2E Database Query Tool
-
-Usage:
-  npm run e2e:db:query -- [options]
+  console.log(`Usage: tsx scripts/e2e-db-query.ts [options]
 
 Options:
-  --stats                Show overall statistics
-  --site <domain>        Show all runs for a specific site
-  --commit <hash>        Show all runs for a specific git commit
-  --failed               Show all failed runs (success = 0)
-  --since <date>         Show runs since a date (ISO format or relative like "7d")
-  --help                 Show this help message
-
+  --stats     Show per-URL pass/fail statistics
+  --overall   Show overall statistics across all test runs
+  --runs      Show test runs with environment metadata
+  
 Examples:
-  npm run e2e:db:query -- --stats
-  npm run e2e:db:query -- --site bbc.com
-  npm run e2e:db:query -- --commit abc123def456789
-  npm run e2e:db:query -- --failed
-  npm run e2e:db:query -- --since "2026-01-25"
-  npm run e2e:db:query -- --since "7d"
+  tsx scripts/e2e-db-query.ts --stats
+  tsx scripts/e2e-db-query.ts --overall
+  tsx scripts/e2e-db-query.ts --runs
+  tsx scripts/e2e-db-query.ts --stats --overall
 `);
-}
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) {
-    return 'N/A';
-  }
-  const date = new Date(dateStr);
-  return date.toLocaleString();
 }
 
 async function formatStats(): Promise<void> {
   try {
-    const stats = await getOverallStats();
+    const stats = await getUrlStats();
 
-    console.log('\n📊 Overall Statistics\n');
-    console.log(`  Total Runs:      ${stats.totalRuns}`);
-    console.log(`  Successful:      ${stats.successfulRuns}`);
-    console.log(`  Failed:          ${stats.failedRuns}`);
-    console.log(`  Success Rate:    ${stats.successRate}%`);
-    console.log(`  Unique Sites:    ${stats.uniqueSites}`);
-    console.log(`  Unique Commits:  ${stats.uniqueCommits}`);
-    console.log('\n  Date Range:');
-    console.log(`    Earliest:      ${formatDate(stats.dateRange.earliest)}`);
-    console.log(`    Latest:        ${formatDate(stats.dateRange.latest)}`);
+    if (stats.length === 0) {
+      console.log('\n  No test data found.\n');
+      return;
+    }
 
-    // Success rate by site
-    console.log('\n📍 Success Rate by Site\n');
-    const bySite = await getSuccessRateBySite();
+    console.log(`\n📊 Per-URL Statistics (${stats.length} URLs)\n`);
+    console.log(
+      '  URL                                                Pass/Total  Rate   Avg(ms)  Strategy      Antibot'
+    );
+    console.log('  ' + '-'.repeat(110));
 
-    if (bySite.length === 0) {
-      console.log('  No data available');
-    } else {
-      console.log('  Site                             Total  Success  Failed  Rate');
-      console.log('  ' + '-'.repeat(70));
-      for (const row of bySite) {
-        const site = row.site.padEnd(30);
-        const total = String(row.total).padStart(5);
-        const success = String(row.success).padStart(7);
-        const failed = String(row.failed).padStart(7);
-        const rate = `${row.successRate}%`.padStart(5);
-        console.log(`  ${site}${total}${success}${failed}${rate}`);
-      }
+    for (const stat of stats) {
+      const url = stat.url.padEnd(52).substring(0, 52);
+      const passTotal = `${stat.passed}/${stat.total_tests}`.padEnd(11);
+      const rate = `${stat.pass_rate.toFixed(1)}%`.padEnd(6);
+      const avgMs = stat.avg_duration_ms
+        ? `${Math.round(stat.avg_duration_ms)}`.padEnd(8)
+        : '-'.padEnd(8);
+      const strategy = (stat.most_common_strategy || '-').padEnd(13);
+      const antibot = stat.antibot_detected > 0 ? `⚠ ${stat.antibot_detected}` : '-';
+
+      console.log(`  ${url}${passTotal}${rate}${avgMs}${strategy}${antibot}`);
     }
 
     console.log('');
   } catch (error) {
-    console.error('Error fetching statistics:', error);
+    console.error('Error fetching URL stats:', error);
     process.exit(1);
   }
 }
 
-async function formatBySite(site: string): Promise<void> {
+async function formatOverall(): Promise<void> {
   try {
-    const runs = await getRunsBySite(site);
+    const stats = await getOverallStats();
 
-    if (runs.length === 0) {
-      console.log(`\n  No runs found for site: ${site}\n`);
+    if (!stats) {
+      console.log('\n  No test data found.\n');
       return;
     }
 
-    const successCount = runs.filter((r) => r.success === 1).length;
-    const failureCount = runs.length - successCount;
-    const successRate = Math.round(((100 * successCount) / runs.length) * 100) / 100;
-
-    console.log(`\n📍 Runs for Site: ${site}\n`);
-    console.log(`  Total:    ${runs.length}`);
-    console.log(`  Success:  ${successCount}`);
-    console.log(`  Failed:   ${failureCount}`);
-    console.log(`  Rate:     ${successRate}%\n`);
-
-    console.log('  ID    Status  Latency  Code  Method         Timestamp');
-    console.log('  ' + '-'.repeat(70));
-
-    for (const run of runs.slice(0, 50)) {
-      const id = String(run.id).padEnd(4);
-      const status = (run.success === 1 ? '✓' : '✗').padEnd(6);
-      const latency = `${run.latency_ms || '-'}ms`.padStart(7);
-      const code = String(run.status_code || '-').padStart(4);
-      const method = (run.extraction_method || '-').padEnd(14);
-      const timestamp = new Date(run.timestamp).toLocaleString();
-      console.log(`  ${id}${status}${latency}${code}  ${method}${timestamp}`);
-    }
-
-    if (runs.length > 50) {
-      console.log(`  ... and ${runs.length - 50} more\n`);
-    } else {
-      console.log('');
-    }
+    console.log('\n📈 Overall Statistics\n');
+    console.log(`  Total test runs:        ${stats.total_runs}`);
+    console.log(`  Total tests executed:   ${stats.total_tests}`);
+    console.log(`  Passed:                 ${stats.total_passed}`);
+    console.log(`  Failed:                 ${stats.total_failed}`);
+    console.log(`  Overall pass rate:      ${stats.overall_pass_rate}%`);
+    console.log(`  Unique URLs tested:     ${stats.unique_urls}`);
+    console.log('');
   } catch (error) {
-    console.error('Error fetching runs:', error);
+    console.error('Error fetching overall stats:', error);
     process.exit(1);
   }
 }
 
-async function formatByCommit(commit: string): Promise<void> {
+async function formatRuns(): Promise<void> {
   try {
-    const runs = await getRunsByCommit(commit);
+    const runs = await getTestRuns(50);
 
     if (runs.length === 0) {
-      console.log(`\n  No runs found for commit: ${commit}\n`);
+      console.log('\n  No test runs found.\n');
       return;
     }
 
-    const successCount = runs.filter((r) => r.success === 1).length;
-    const failureCount = runs.length - successCount;
-    const successRate = Math.round(((100 * successCount) / runs.length) * 100) / 100;
-    const uniqueSites = new Set(runs.map((r) => r.site)).size;
+    console.log(`\n🔄 Test Runs (${runs.length} most recent)\n`);
+    console.log(
+      '  Commit   Type   OS                         Network       Preset              Pass/Total  Started'
+    );
+    console.log('  ' + '-'.repeat(110));
 
-    console.log(`\n🔧 Runs for Commit: ${commit}\n`);
-    console.log(`  Total:        ${runs.length}`);
-    console.log(`  Success:      ${successCount}`);
-    console.log(`  Failed:       ${failureCount}`);
-    console.log(`  Rate:         ${successRate}%`);
-    console.log(`  Unique Sites: ${uniqueSites}\n`);
-
-    console.log('  Site                        Status  Latency  Code  Timestamp');
-    console.log('  ' + '-'.repeat(75));
-
-    for (const run of runs.slice(0, 50)) {
-      const site = (run.site || '-').padEnd(25);
-      const status = (run.success === 1 ? '✓' : '✗').padEnd(6);
-      const latency = `${run.latency_ms || '-'}ms`.padStart(7);
-      const code = String(run.status_code || '-').padStart(4);
-      const timestamp = new Date(run.timestamp).toLocaleString();
-      console.log(`  ${site}${status}${latency}${code}  ${timestamp}`);
+    for (const run of runs) {
+      const commit = (run.git_commit || '').substring(0, 7).padEnd(7);
+      const type = (run.run_type || '-').padEnd(6);
+      const osField = (run.os || '-').padEnd(27);
+      const network = (run.network || '-').padEnd(13);
+      const preset = (run.preset || '-').padEnd(20);
+      const passed = run.passed_tests ?? '-';
+      const total = run.total_tests ?? '-';
+      const passTotal = `${passed}/${total}`.padEnd(11);
+      const started = new Date(run.started_at).toLocaleString();
+      console.log(`  ${commit}${type}${osField}${network}${preset}${passTotal}${started}`);
     }
 
-    if (runs.length > 50) {
-      console.log(`  ... and ${runs.length - 50} more\n`);
-    } else {
-      console.log('');
-    }
+    console.log('');
   } catch (error) {
-    console.error('Error fetching runs:', error);
-    process.exit(1);
-  }
-}
-
-async function formatFailed(): Promise<void> {
-  try {
-    const runs = await getFailedRuns();
-
-    if (runs.length === 0) {
-      console.log('\n  No failed runs found.\n');
-      return;
-    }
-
-    console.log(`\n❌ Failed Runs (Total: ${runs.length})\n`);
-    console.log('  ID    Site                    Code  Error Type           Timestamp');
-    console.log('  ' + '-'.repeat(80));
-
-    for (const run of runs.slice(0, 50)) {
-      const id = String(run.id).padEnd(4);
-      const site = (run.site || '-').padEnd(23);
-      const code = String(run.status_code || '-').padStart(4);
-      const errorType = (run.error_type || '-').padEnd(20);
-      const timestamp = new Date(run.timestamp).toLocaleString();
-      console.log(`  ${id}${site}${code}  ${errorType}${timestamp}`);
-    }
-
-    if (runs.length > 50) {
-      console.log(`  ... and ${runs.length - 50} more\n`);
-    } else {
-      console.log('');
-    }
-  } catch (error) {
-    console.error('Error fetching failed runs:', error);
-    process.exit(1);
-  }
-}
-
-async function formatSince(dateStr: string): Promise<void> {
-  try {
-    const runs = await getRunsSince(dateStr);
-
-    if (runs.length === 0) {
-      console.log(`\n  No runs found since ${dateStr}\n`);
-      return;
-    }
-
-    const successCount = runs.filter((r) => r.success === 1).length;
-    const successRate = Math.round(((100 * successCount) / runs.length) * 100) / 100;
-
-    console.log(`\n📅 Runs Since: ${dateStr}\n`);
-    console.log(`  Total:   ${runs.length}`);
-    console.log(`  Success: ${successCount}`);
-    console.log(`  Failed:  ${runs.length - successCount}`);
-    console.log(`  Rate:    ${successRate}%\n`);
-
-    console.log('  ID    Site                    Status  Latency  Timestamp');
-    console.log('  ' + '-'.repeat(75));
-
-    for (const run of runs.slice(0, 50)) {
-      const id = String(run.id).padEnd(4);
-      const site = (run.site || '-').padEnd(23);
-      const status = (run.success === 1 ? '✓' : '✗').padEnd(6);
-      const latency = `${run.latency_ms || '-'}ms`.padStart(7);
-      const timestamp = new Date(run.timestamp).toLocaleString();
-      console.log(`  ${id}${site}${status}${latency}  ${timestamp}`);
-    }
-
-    if (runs.length > 50) {
-      console.log(`  ... and ${runs.length - 50} more\n`);
-    } else {
-      console.log('');
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('Invalid date format')) {
-      console.error('Error:', error.message);
-    } else {
-      console.error('Error fetching runs:', error);
-    }
+    console.error('Error fetching test runs:', error);
     process.exit(1);
   }
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs();
+  const args = parseArgs(process.argv.slice(2));
 
-  // Show help if requested or no arguments
-  if (args.help || (!args.stats && !args.site && !args.commit && !args.failed && !args.since)) {
+  if (!args.stats && !args.overall && !args.runs) {
     showUsage();
-    return;
+    process.exit(0);
   }
 
   if (args.stats) {
     await formatStats();
-  } else if (args.site) {
-    await formatBySite(args.site);
-  } else if (args.commit) {
-    await formatByCommit(args.commit);
-  } else if (args.failed) {
-    await formatFailed();
-  } else if (args.since) {
-    await formatSince(args.since);
+  }
+
+  if (args.overall) {
+    await formatOverall();
+  }
+
+  if (args.runs) {
+    await formatRuns();
   }
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
+main().catch((error) => {
+  console.error('Fatal error:', error);
   process.exit(1);
 });

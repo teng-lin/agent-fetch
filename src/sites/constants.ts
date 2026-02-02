@@ -12,9 +12,9 @@ export const USER_AGENTS = {
   LAMARR:
     'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.103 Mobile Safari/537.36 Lamarr',
   GOOGLE_INSPECTION: 'Mozilla/5.0 (compatible; Google-InspectionTool/1.0)',
-  // Mobile UA for sites with strong bot detection (avoids HTTP/2 protocol errors)
+  // Mobile UA for sites with strong bot detection — must match httpcloak's ANDROID_CHROME_143 preset
   MOBILE_CHROME:
-    'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36',
 } as const;
 
 /** Common referer headers */

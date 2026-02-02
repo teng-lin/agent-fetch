@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { httpFetch } from '../fetch/http-fetch.js';
+import { httpFetch, resolvePreset } from '../fetch/http-fetch.js';
 import type { ExtractionResult } from '../extract/types.js';
 
 // Mock dependencies
@@ -130,7 +130,8 @@ describe('httpFetch', () => {
       expect.objectContaining({
         'User-Agent': customUA,
         Referer: customReferer,
-      })
+      }),
+      undefined
     );
   });
 
@@ -465,34 +466,211 @@ describe('httpFetch', () => {
     expect(result.lang).toBeUndefined();
   });
 
-  it('should detect DNS rebinding attack', async () => {
+  it('retries on network timeout and succeeds', async () => {
+    const url = 'https://example.com/article';
+    const mockHtml = '<html><body>Article content</body></html>';
+
+    // First call: network error (statusCode 0), second call: success
+    vi.mocked(httpRequest)
+      .mockResolvedValueOnce({
+        success: false,
+        statusCode: 0,
+        headers: {},
+        cookies: [],
+        error: 'Error: connect ETIMEDOUT',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: mockHtml,
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Retry Success',
+      byline: null,
+      content: '<p>Content</p>',
+      textContent: 'Article content. '.repeat(20),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Retry Success');
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after max retries on persistent network error', async () => {
+    const url = 'https://example.com/article';
+
+    // All 3 calls fail with network error
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 0,
+      headers: {},
+      cookies: [],
+      error: 'Error: connect ETIMEDOUT',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Error: connect ETIMEDOUT');
+    expect(httpRequest).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+  });
+
+  it('does not retry on HTTP errors', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 403,
+      headers: {},
+      cookies: [],
+      error: 'forbidden',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('forbidden');
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry dns_rebinding_detected errors', async () => {
     const url = 'https://evil.com/article';
 
-    // Mock httpRequest to simulate DNS rebinding
-    let callCount = 0;
-    vi.mocked(httpRequest).mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) {
-        // First call returns dns_rebinding_detected error
-        return {
-          success: false,
-          statusCode: 0,
-          headers: {},
-          cookies: [],
-          error: 'dns_rebinding_detected',
-        };
-      }
-      // Should not reach here
-      throw new Error('Should have detected rebinding on first call');
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: false,
+      statusCode: 0,
+      headers: {},
+      cookies: [],
+      error: 'dns_rebinding_detected',
     });
 
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('dns_rebinding_detected');
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes mobile preset to httpRequest for Android Chrome UA', async () => {
+    const url = 'https://example.com/article';
+    const mobileUA =
+      'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36';
+
+    vi.mocked(getSiteUserAgent).mockReturnValue(mobileUA);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    await httpFetch(url);
+
+    // 3rd argument should be the Android Chrome preset (not undefined)
+    const presetArg = vi.mocked(httpRequest).mock.calls[0][2];
+    expect(presetArg).toBeDefined();
+    expect(typeof presetArg).toBe('string');
+  });
+
+  it('passes undefined preset for desktop UA', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(getSiteUserAgent).mockReturnValue(null);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    await httpFetch(url);
+
+    const presetArg = vi.mocked(httpRequest).mock.calls[0][2];
+    expect(presetArg).toBeUndefined();
+  });
+});
+
+describe('resolvePreset', () => {
+  it('returns Android Chrome preset for Android Chrome UA', () => {
+    const ua =
+      'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36';
+    const preset = resolvePreset(ua);
+    expect(preset).toBeDefined();
+    expect(typeof preset).toBe('string');
+  });
+
+  it('returns iOS Chrome preset for iPhone CriOS UA', () => {
+    const ua =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/143.0.0.0 Mobile/15E148 Safari/604.1';
+    const preset = resolvePreset(ua);
+    expect(preset).toBeDefined();
+  });
+
+  it('returns iOS Safari preset for iPhone Safari UA (no CriOS)', () => {
+    const ua =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+    const preset = resolvePreset(ua);
+    expect(preset).toBeDefined();
+  });
+
+  it('returns undefined for desktop Chrome UA', () => {
+    const ua =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
+    expect(resolvePreset(ua)).toBeUndefined();
+  });
+
+  it('returns undefined for null UA', () => {
+    expect(resolvePreset(null)).toBeUndefined();
   });
 
   describe('archive fallback', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
     it('recovers from challenge page via archive when direct extraction fails', async () => {
       const url = 'https://example.com/article';
 

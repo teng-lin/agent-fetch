@@ -1,7 +1,8 @@
 /**
  * HTTP fetch logic - fast extraction with proper error handling
  */
-import { httpRequest } from './http-client.js';
+import httpcloak from 'httpcloak';
+import { httpRequest, type HttpResponse } from './http-client.js';
 import { quickValidate } from './content-validator.js';
 import { extractFromHtml } from '../extract/content-extractors.js';
 import { fetchFromArchives } from './archive-fallback.js';
@@ -17,6 +18,13 @@ const MIN_CONTENT_LENGTH = 100;
 
 // Minimum word count to consider content complete (below this, try archive)
 const MIN_GOOD_WORD_COUNT = 100;
+
+// Retry configuration for transient network errors
+const MAX_RETRIES = 2;
+const BASE_RETRY_DELAY_MS = 1000;
+
+// Errors that should NOT be retried even though statusCode is 0
+const NON_RETRYABLE_ERRORS = new Set(['dns_rebinding_detected']);
 
 const VALIDATION_ERROR_HINTS: Partial<Record<ValidationError, string>> = {
   challenge_detected: 'This site uses anti-bot challenges',
@@ -38,6 +46,24 @@ const ARCHIVE_FALLBACK_ERRORS = new Set<ValidationError>([
   'access_restricted',
   'insufficient_content',
 ]);
+
+/**
+ * Select the httpcloak TLS preset that matches a mobile User-Agent string.
+ * Returns undefined for desktop UAs (caller uses the default desktop preset).
+ */
+export function resolvePreset(userAgent: string | null): string | undefined {
+  if (!userAgent) return undefined;
+  if (/Android/i.test(userAgent) && /Chrome/i.test(userAgent)) {
+    return httpcloak.Preset.ANDROID_CHROME_143;
+  }
+  if (/iPhone/i.test(userAgent) && /CriOS/i.test(userAgent)) {
+    return httpcloak.Preset.IOS_CHROME_143;
+  }
+  if (/iPhone/i.test(userAgent) && /Safari/i.test(userAgent)) {
+    return httpcloak.Preset.IOS_SAFARI_18;
+  }
+  return undefined;
+}
 
 /** Build a failure result with common fields pre-filled. */
 function failResult(
@@ -62,7 +88,7 @@ function successResult(
   url: string,
   startTime: number,
   extracted: ExtractionResult,
-  antibot?: AntibotDetection[]
+  extras?: Partial<FetchResult>
 ): FetchResult {
   return {
     success: true,
@@ -76,7 +102,7 @@ function successResult(
     siteName: extracted.siteName ?? undefined,
     publishedTime: extracted.publishedTime ?? undefined,
     lang: extracted.lang ?? undefined,
-    antibot,
+    ...extras,
   };
 }
 
@@ -107,7 +133,7 @@ async function tryArchiveFallback(
     );
 
     return {
-      ...successResult(url, startTime, extracted, antibot),
+      ...successResult(url, startTime, extracted, { antibot }),
       archiveUrl: archive.archiveUrl,
       statusCode: null,
       rawHtml: null,
@@ -157,17 +183,58 @@ function runAntibotDetection(
   return mergeDetections(responseDetections, htmlDetections);
 }
 
+/** Check if a failed response is a transient network error worth retrying. */
+function isRetryableError(response: HttpResponse): boolean {
+  return (
+    !response.success &&
+    response.statusCode === 0 &&
+    !NON_RETRYABLE_ERRORS.has(response.error ?? '')
+  );
+}
+
+/** Exponential backoff delay for a given retry attempt (0-indexed). */
+function retryDelay(attempt: number): number {
+  return BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+}
+
 /**
  * Perform fast HTTP-only extraction.
  * Returns extracted content on success, clear error with suggested action on failure.
  */
-export async function httpFetch(url: string): Promise<FetchResult> {
+
+/**
+ * Options for httpFetch
+ */
+export interface HttpFetchOptions {
+  /**
+   * HTTP Cloak TLS preset (e.g. 'chrome-143', 'android-chrome-143', 'ios-safari-18')
+   * If not provided, automatically resolved from User-Agent or defaults to Chrome.
+   */
+  preset?: string;
+}
+
+export async function httpFetch(url: string, options: HttpFetchOptions = {}): Promise<FetchResult> {
   const startTime = Date.now();
+
+  // Use provided preset or resolve from UA
+  const preset = options.preset ?? resolvePreset(getSiteUserAgent(url));
 
   try {
     logger.info({ url }, 'HTTP fetch starting');
 
-    const response = await httpRequest(url, buildSiteHeaders(url));
+    let response: HttpResponse;
+    let attempt = 0;
+
+    while (true) {
+      response = await httpRequest(url, buildSiteHeaders(url), preset);
+
+      if (!isRetryableError(response) || attempt >= MAX_RETRIES) break;
+
+      attempt++;
+      const delay = retryDelay(attempt - 1);
+      logger.info({ url, attempt, delay }, 'Retrying after network error');
+      await new Promise((r) => setTimeout(r, delay));
+    }
 
     // Run antibot detection on every response
     const antibot = runAntibotDetection(response.headers, response.cookies, response.html);
@@ -235,7 +302,7 @@ export async function httpFetch(url: string): Promise<FetchResult> {
               { url, method: recovered.method },
               'Recovered content despite validation warning'
             );
-            return successResult(url, startTime, recovered, antibotField);
+            return successResult(url, startTime, recovered, { antibot: antibotField });
           }
         } catch (e) {
           logger.debug({ url, error: String(e) }, 'Recovery extraction failed');
@@ -315,16 +382,14 @@ export async function httpFetch(url: string): Promise<FetchResult> {
       if (archiveResult) return archiveResult;
     }
 
-    const latencyMs = Date.now() - startTime;
-    logger.info({ url, latencyMs }, 'HTTP fetch succeeded');
+    logger.info({ url, latencyMs: Date.now() - startTime }, 'HTTP fetch succeeded');
 
-    return {
-      ...successResult(url, startTime, extracted, antibotField),
-      latencyMs,
+    return successResult(url, startTime, extracted, {
+      antibot: antibotField,
       statusCode: response.statusCode,
       rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
       extractionMethod: extracted.method ?? null,
-    };
+    });
   } catch (error) {
     logger.error({ url, error: String(error) }, 'HTTP fetch failed');
 
