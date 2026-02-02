@@ -203,9 +203,9 @@ export async function httpFetch(url: string): Promise<FetchResult> {
       });
     }
 
-    logger.info({ url, latencyMs: Date.now() - startTime }, 'HTTP fetch succeeded');
-
-    return successResult(url, startTime, extracted, antibotField);
+    const result = successResult(url, startTime, extracted, antibotField);
+    logger.info({ url, latencyMs: result.latencyMs }, 'HTTP fetch succeeded');
+    return result;
   } catch (error) {
     logger.error({ url, error: String(error) }, 'HTTP fetch failed');
 
