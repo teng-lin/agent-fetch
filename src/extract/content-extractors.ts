@@ -5,6 +5,7 @@
 import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
 import unfluff from 'unfluff';
+import { extractContent } from '@wrtnlabs/web-content-extractor';
 import {
   type ExtractionResult,
   MIN_CONTENT_LENGTH,
@@ -420,6 +421,39 @@ export function tryUnfluffExtraction(html: string, url: string): ExtractionResul
 }
 
 /**
+ * Strategy 6: Extract using text density analysis (CETD algorithm).
+ * Statistical approach based on text-to-tag density ratios per DOM node.
+ * Complementary to Readability's heuristic class/id scoring.
+ */
+export function tryTextDensityExtraction(html: string, url: string): ExtractionResult | null {
+  try {
+    const extracted = extractContent(html);
+
+    if (extracted.content.length < MIN_CONTENT_LENGTH) {
+      return null;
+    }
+
+    // Parse with linkedom for metadata extraction (reuses the same DOM lib as other strategies)
+    const { document } = parseHTML(html);
+
+    return {
+      title: extractTitle(document),
+      byline: null,
+      content: extracted.contentHtmls.join(''),
+      textContent: extracted.content,
+      excerpt: generateExcerpt(extracted.description ?? null, extracted.content),
+      siteName: extractSiteName(document),
+      publishedTime: extractPublishedTime(document),
+      lang: document.documentElement.lang || null,
+      method: 'text-density',
+    };
+  } catch (e) {
+    logger.debug({ url, error: String(e) }, 'Text density extraction failed');
+    return null;
+  }
+}
+
+/**
  * Multi-strategy extraction from HTML
  * Exported for testing and direct HTML extraction use cases
  * Uses linkedom for DOM parsing (crash-resistant, no CSS parsing errors)
@@ -470,7 +504,14 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     return selectorResult;
   }
 
-  // Strategy 4: Try unfluff (different heuristics, good for unusual HTML)
+  // Strategy 4: Try text density analysis (statistical approach, different from heuristic scoring)
+  const textDensityResult = tryTextDensityExtraction(html, url);
+  if (meetsThreshold(textDensityResult, MIN_CONTENT_LENGTH)) {
+    logger.debug({ url, method: 'text-density' }, 'Extraction succeeded');
+    return textDensityResult;
+  }
+
+  // Strategy 5: Try unfluff (different heuristics, good for unusual HTML)
   const unfluffResult = tryUnfluffExtraction(html, url);
   if (meetsThreshold(unfluffResult, MIN_CONTENT_LENGTH)) {
     logger.debug({ url, method: 'unfluff' }, 'Extraction succeeded');
@@ -478,7 +519,8 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   }
 
   // Return best partial result if we have one
-  const partialResult = readabilityResult ?? jsonLdResult ?? selectorResult ?? unfluffResult;
+  const partialResult =
+    readabilityResult ?? jsonLdResult ?? selectorResult ?? textDensityResult ?? unfluffResult;
   if (!partialResult) {
     logger.debug({ url }, 'All extraction strategies failed');
   }

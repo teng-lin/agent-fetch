@@ -34,6 +34,7 @@
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
+    "@wrtnlabs/web-content-extractor": "^3.2.4",
     "dotenv": "^17.2.3",
     "httpcloak": "^1.5.10",
     "linkedom": "^0.18.12",
