@@ -12,8 +12,11 @@ import type { ExtractionResult } from '../extract/types.js';
 import type { FetchResult, ValidationError } from './types.js';
 import type { AntibotDetection } from '../antibot/detector.js';
 
-// Minimum content length for successful extraction
+// Minimum content length (chars) for successful extraction
 const MIN_CONTENT_LENGTH = 100;
+
+// Minimum word count to consider content complete (below this, try archive)
+const MIN_GOOD_WORD_COUNT = 100;
 
 const VALIDATION_ERROR_HINTS: Partial<Record<ValidationError, string>> = {
   challenge_detected: 'This site uses anti-bot challenges',
@@ -189,6 +192,12 @@ export async function httpFetch(url: string): Promise<FetchResult> {
         );
       }
 
+      // Try archive fallback for 403 (paywall/geo-block often has archived content)
+      if (response.statusCode === 403) {
+        const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
+        if (archiveResult) return archiveResult;
+      }
+
       // Let high-confidence antibot detection override the default suggested action
       const actionable = antibot.find((d) => d.confidence >= 90 && d.suggestedAction !== 'unknown');
       const defaultAction = response.statusCode === 403 ? 'retry_with_extract' : 'skip';
@@ -299,6 +308,14 @@ export async function httpFetch(url: string): Promise<FetchResult> {
         },
         response.statusCode
       );
+    }
+
+    // Try archive if extraction succeeded but content looks like a stub/teaser
+    const wordCount = extracted.textContent!.split(/\s+/).length;
+    if (wordCount < MIN_GOOD_WORD_COUNT) {
+      logger.debug({ url, wordCount }, 'Low word count, trying archive for fuller content');
+      const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
+      if (archiveResult) return archiveResult;
     }
 
     const latencyMs = Date.now() - startTime;
