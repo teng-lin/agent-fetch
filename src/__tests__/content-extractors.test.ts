@@ -642,14 +642,16 @@ describe('content-extractors', () => {
       expect(result!.textContent!.length).toBeGreaterThanOrEqual(GOOD_CONTENT_LENGTH);
     });
 
-    it('keeps Readability when text-density does not find significantly more content', () => {
+    it('selects longest content when multiple strategies meet threshold', () => {
       const content = loremText(GOOD_CONTENT_LENGTH);
       const html = `<html><head><title>Test</title></head><body>
         <article><h1>Test</h1><p>${content}</p></article>
       </body></html>`;
       const result = extractFromHtml(html, 'https://example.com/article');
       expect(result).not.toBeNull();
-      expect(result!.method).toMatch(/^readability/);
+      // With prefer-longest logic, whichever strategy extracts the most content wins
+      expect(result!.method).toMatch(/^(readability|text-density)/);
+      expect(result!.textContent!.length).toBeGreaterThanOrEqual(GOOD_CONTENT_LENGTH);
     });
 
     it('does not overwrite existing metadata from winning strategy', () => {

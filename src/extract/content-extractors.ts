@@ -1043,17 +1043,36 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     rscResult,
   ];
 
-  // Pick winner by threshold (same priority order as before)
-  const candidates: [ExtractionResult | null, number][] = [
-    [effectiveReadability, GOOD_CONTENT_LENGTH],
-    [rscResult, GOOD_CONTENT_LENGTH],
-    [jsonLdResult, GOOD_CONTENT_LENGTH],
+  // Collect all results that meet the good content threshold
+  const goodCandidates = [effectiveReadability, rscResult, jsonLdResult, textDensityResult].filter(
+    (r): r is ExtractionResult => meetsThreshold(r, GOOD_CONTENT_LENGTH)
+  );
+
+  // If multiple strategies meet the threshold, prefer the one with the most content
+  if (goodCandidates.length > 0) {
+    const winner = goodCandidates.reduce((best, current) => {
+      const bestLen = best.textContent?.length ?? 0;
+      const currentLen = current.textContent?.length ?? 0;
+      return currentLen > bestLen ? current : best;
+    });
+    logger.debug(
+      { url, method: winner.method, contentLen: winner.textContent?.length },
+      'Extraction succeeded (preferred longest)'
+    );
+    return withMarkdown(composeMetadata(winner, allResults, jsonLdMeta));
+  }
+
+  // Fall back to minimum threshold candidates in priority order
+  const fallbackCandidates: [ExtractionResult | null, number][] = [
+    [effectiveReadability, MIN_CONTENT_LENGTH],
+    [rscResult, MIN_CONTENT_LENGTH],
+    [jsonLdResult, MIN_CONTENT_LENGTH],
     [selectorResult, MIN_CONTENT_LENGTH],
     [textDensityResult, MIN_CONTENT_LENGTH],
     [unfluffResult, MIN_CONTENT_LENGTH],
   ];
 
-  for (const [result, threshold] of candidates) {
+  for (const [result, threshold] of fallbackCandidates) {
     if (meetsThreshold(result, threshold)) {
       logger.debug({ url, method: result!.method }, 'Extraction succeeded');
       return withMarkdown(composeMetadata(result!, allResults, jsonLdMeta));
