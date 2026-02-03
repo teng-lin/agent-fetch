@@ -518,22 +518,25 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       );
     }
 
-    // Extract content
+    // Try WP REST API first if available - structured data is more reliable than DOM extraction
+    const wpApiUrl = resolveWpApiUrl(response.html, url);
+    if (wpApiUrl) {
+      const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, preset);
+      if (wpResult) {
+        logger.info({ url, apiUrl: wpApiUrl }, 'Extracted content from WP REST API');
+        return successResult(url, startTime, wpResult, {
+          antibot: antibotField,
+          statusCode: response.statusCode,
+          rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+          extractionMethod: 'wp-rest-api',
+        });
+      }
+    }
+
+    // Extract content using DOM-based strategies
     const extracted = extractFromHtml(response.html, url);
 
     if (!extracted) {
-      // Try WP REST API before archive when extraction returns null
-      const wpFallback = await tryWpRestApiFallback(
-        response.html,
-        url,
-        startTime,
-        response,
-        null,
-        preset,
-        antibotField
-      );
-      if (wpFallback) return wpFallback;
-
       const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
       if (archiveResult) return archiveResult;
 
@@ -553,18 +556,6 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
 
     // Handle insufficient extracted content
     if (!extracted.textContent || extracted.textContent.trim().length < MIN_CONTENT_LENGTH) {
-      // Try WP REST API before archive for insufficient content
-      const wpFallback = await tryWpRestApiFallback(
-        response.html,
-        url,
-        startTime,
-        response,
-        extracted,
-        preset,
-        antibotField
-      );
-      if (wpFallback) return wpFallback;
-
       const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
       if (archiveResult) return archiveResult;
 
@@ -583,22 +574,9 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       );
     }
 
-    // Try WP REST API and archive if extraction succeeded but content looks like a stub/teaser
+    // Try archive if extraction succeeded but content looks like a stub/teaser
     const wordCount = extracted.textContent!.split(/\s+/).length;
     if (wordCount < MIN_GOOD_WORD_COUNT) {
-      // Try WP REST API first (faster, more reliable than archives)
-      const wpFallback = await tryWpRestApiFallback(
-        response.html,
-        url,
-        startTime,
-        response,
-        extracted,
-        preset,
-        antibotField
-      );
-      if (wpFallback) return wpFallback;
-
-      // Fall back to archive services
       logger.debug({ url, wordCount }, 'Low word count, trying archive for fuller content');
       const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
       if (archiveResult) return archiveResult;

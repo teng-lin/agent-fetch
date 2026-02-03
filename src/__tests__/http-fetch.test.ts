@@ -949,12 +949,12 @@ describe('resolvePreset', () => {
   });
 });
 
-describe('WP REST API fallback', () => {
+describe('WP REST API primary extraction', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('fetches from WP REST API when detected and content is insufficient', async () => {
+  it('fetches from WP REST API first when detected', async () => {
     const url = 'https://example.com/2024/01/article-slug/';
     const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
 
@@ -967,21 +967,6 @@ describe('WP REST API fallback', () => {
     });
 
     vi.mocked(quickValidate).mockReturnValue({ valid: true });
-
-    // extractFromHtml returns content >= 100 chars but < 100 words (triggers low word count path)
-    vi.mocked(extractFromHtml).mockReturnValueOnce({
-      title: 'Article',
-      byline: null,
-      content: '<p>Teaser only.</p>',
-      textContent: 'Teaser only. Subscribe to read more about this very interesting topic. '.repeat(
-        3
-      ),
-      excerpt: null,
-      siteName: null,
-      publishedTime: null,
-      lang: null,
-      method: 'readability',
-    });
 
     // detectWpRestApi finds the API URL
     vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
@@ -1008,6 +993,8 @@ describe('WP REST API fallback', () => {
     expect(result.byline).toBe('John Doe');
     expect(result.extractionMethod).toBe('wp-rest-api');
     expect(httpRequest).toHaveBeenCalledTimes(2);
+    // extractFromHtml should NOT be called when WP succeeds
+    expect(extractFromHtml).not.toHaveBeenCalled();
     // Verify ?_embed was appended to the API URL
     expect(vi.mocked(httpRequest).mock.calls[1][0]).toContain('?_embed');
   });
@@ -1042,22 +1029,32 @@ describe('WP REST API fallback', () => {
     expect(httpRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('skips WP REST API when initial extraction has enough content (>= 100 words)', async () => {
+  it('falls back to DOM extraction when WP REST API fails', async () => {
     const url = 'https://example.com/article';
     const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
 
-    vi.mocked(httpRequest).mockResolvedValueOnce({
-      success: true,
-      statusCode: 200,
-      html:
-        '<html><head><link rel="alternate" type="application/json" href="' +
-        apiUrl +
-        '" /></head><body>Full article</body></html>',
-      headers: { 'content-type': 'text/html' },
-      cookies: [],
-    });
+    vi.mocked(httpRequest)
+      .mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html:
+          '<html><head><link rel="alternate" type="application/json" href="' +
+          apiUrl +
+          '" /></head><body>Full article</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      })
+      // WP API request fails
+      .mockResolvedValueOnce({
+        success: false,
+        statusCode: 403,
+        headers: {},
+        cookies: [],
+        error: 'forbidden',
+      });
 
     vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
 
     vi.mocked(extractFromHtml).mockReturnValueOnce({
       title: 'Test',
@@ -1074,7 +1071,10 @@ describe('WP REST API fallback', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(true);
-    expect(httpRequest).toHaveBeenCalledTimes(1);
+    expect(result.extractionMethod).toBe('readability');
+    // WP was tried first (failed), then DOM extraction succeeded
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+    expect(extractFromHtml).toHaveBeenCalledTimes(1);
   });
 
   it('falls through to archive when WP API also fails', async () => {
