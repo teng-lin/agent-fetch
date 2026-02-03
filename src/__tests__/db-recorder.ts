@@ -40,7 +40,11 @@ function getSitesConfigJson(): string | null {
 
     // Load user config if specified
     let user: Record<string, unknown> = {};
-    const userConfigPath = process.env.LYNXGET_SITES_CONFIG;
+    let userConfigPath = process.env.LYNXGET_SITES_CONFIG;
+    // Expand ~ to home directory (shell doesn't do this for env vars read by Node)
+    if (userConfigPath?.startsWith('~/')) {
+      userConfigPath = userConfigPath.replace('~', process.env.HOME || '');
+    }
     if (userConfigPath && fs.existsSync(userConfigPath)) {
       user = JSON.parse(fs.readFileSync(userConfigPath, 'utf-8'));
     }

@@ -564,7 +564,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           logger.debug({ url, error: String(e) }, 'WP REST API fast path failed');
         }
 
-        logger.debug({ url }, 'WP REST API fast path returned no content, falling back to HTML fetch');
+        logger.debug(
+          { url },
+          'WP REST API fast path returned no content, falling back to HTML fetch'
+        );
       }
     }
 

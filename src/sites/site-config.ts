@@ -121,8 +121,13 @@ function loadJsonSiteConfigs(): Record<string, SiteConfig> {
  * format as config/sites.json. User configs take highest priority.
  */
 function loadUserSiteConfigs(): Record<string, SiteConfig> {
-  const configPath = process.env.LYNXGET_SITES_CONFIG;
+  let configPath = process.env.LYNXGET_SITES_CONFIG;
   if (!configPath) return {};
+
+  // Expand ~ to home directory (shell doesn't do this for env vars read by Node)
+  if (configPath.startsWith('~/')) {
+    configPath = configPath.replace('~', process.env.HOME || '');
+  }
 
   try {
     const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
