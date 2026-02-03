@@ -12,6 +12,7 @@ import {
   GOOD_CONTENT_LENGTH,
   DEFAULT_EXCERPT_LENGTH,
 } from './types.js';
+import { htmlToMarkdown } from './markdown.js';
 import { meetsThreshold } from './utils.js';
 import { sitePreferJsonLd, siteUseNextData } from '../sites/site-config.js';
 import { logger } from '../logger.js';
@@ -393,6 +394,22 @@ function composeMetadata(
   return composed;
 }
 
+const PLAIN_TEXT_METHODS = new Set(['unfluff', 'next-data', 'next-rsc']);
+
+/**
+ * Populate the `markdown` field on an ExtractionResult.
+ * Plain-text methods (unfluff, next-data, next-rsc) have no HTML to convert,
+ * so `textContent` is used as-is. HTML-based methods get converted via Turndown.
+ */
+function withMarkdown(result: ExtractionResult): ExtractionResult {
+  const markdown = PLAIN_TEXT_METHODS.has(result.method)
+    ? result.textContent
+    : result.content
+      ? htmlToMarkdown(result.content)
+      : null;
+  return { ...result, markdown };
+}
+
 /**
  * Strategy 4: Extract from Next.js __NEXT_DATA__
  * Some sites embed full article content in the page props JSON
@@ -679,7 +696,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     const nextDataResult = tryNextDataExtraction(document, url);
     if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'next-data' }, 'Extraction succeeded (Next.js data)');
-      return nextDataResult;
+      return withMarkdown(nextDataResult!);
     }
   }
 
@@ -691,7 +708,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
-      return jsonLdResult;
+      return withMarkdown(jsonLdResult!);
     }
   }
 
@@ -762,7 +779,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   for (const [result, threshold] of candidates) {
     if (meetsThreshold(result, threshold)) {
       logger.debug({ url, method: result!.method }, 'Extraction succeeded');
-      return composeMetadata(result!, allResults, jsonLdMeta);
+      return withMarkdown(composeMetadata(result!, allResults, jsonLdMeta));
     }
   }
 
@@ -775,7 +792,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     textDensityResult ??
     unfluffResult;
   if (partialResult) {
-    return composeMetadata(partialResult, allResults, jsonLdMeta);
+    return withMarkdown(composeMetadata(partialResult, allResults, jsonLdMeta));
   }
 
   logger.debug({ url }, 'All extraction strategies failed');

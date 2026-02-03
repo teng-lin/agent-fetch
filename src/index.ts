@@ -27,6 +27,7 @@ export {
   detectFromWindowResults,
 } from './antibot/detector.js';
 export { extractFromHtml, detectWpRestApi } from './extract/content-extractors.js';
+export { htmlToMarkdown } from './extract/markdown.js';
 export { getSiteConfig, getSiteUserAgent, getSiteReferer } from './sites/site-config.js';
 export type { FetchResult, ValidationResult, ValidationError } from './fetch/types.js';
 export type { HttpFetchOptions } from './fetch/http-fetch.js';

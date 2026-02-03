@@ -14,6 +14,7 @@ import {
   getSiteWpJsonApiPath,
 } from '../sites/site-config.js';
 import { logger } from '../logger.js';
+import { htmlToMarkdown } from '../extract/markdown.js';
 import type { ExtractionResult } from '../extract/types.js';
 import type { FetchResult, ValidationError } from './types.js';
 import type { AntibotDetection } from '../antibot/detector.js';
@@ -109,6 +110,7 @@ function successResult(
     siteName: extracted.siteName ?? undefined,
     publishedTime: extracted.publishedTime ?? undefined,
     lang: extracted.lang ?? undefined,
+    markdown: extracted.markdown ?? undefined,
     ...extras,
   };
 }
@@ -241,6 +243,7 @@ async function tryWpRestApiExtraction(
       siteName: originalResult?.siteName ?? null,
       publishedTime: dateGmt ?? originalResult?.publishedTime ?? null,
       lang: originalResult?.lang ?? null,
+      markdown: htmlToMarkdown(contentHtml),
       method: 'wp-rest-api',
     };
   } catch (e) {

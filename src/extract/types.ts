@@ -44,6 +44,7 @@ export interface ExtractionResult {
   siteName: string | null;
   publishedTime: string | null;
   lang: string | null;
+  markdown?: string | null;
   method: string;
   archiveUrl?: string | null;
 }

@@ -13,6 +13,7 @@ interface CliOptions {
   raw: boolean;
   detect: boolean;
   quiet: boolean;
+  text: boolean;
   preset?: string;
 }
 
@@ -27,6 +28,7 @@ export function parseArgs(args: string[]): ParseResult {
   let raw = false;
   let detect = false;
   let quiet = false;
+  let text = false;
   let preset: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -35,6 +37,7 @@ export function parseArgs(args: string[]): ParseResult {
     else if (arg === '--raw') raw = true;
     else if (arg === '--detect') detect = true;
     else if (arg === '-q' || arg === '--quiet') quiet = true;
+    else if (arg === '--text') text = true;
     else if (arg === '--help' || arg === '-h') return { kind: 'help' };
     else if (arg === '--preset') {
       if (i + 1 >= args.length) return { kind: 'error', message: '--preset requires a value' };
@@ -54,6 +57,7 @@ export function parseArgs(args: string[]): ParseResult {
       raw,
       detect,
       quiet,
+      text,
       preset: preset ?? process.env.LYNXGET_PRESET,
     },
   };
@@ -62,11 +66,14 @@ export function parseArgs(args: string[]): ParseResult {
 function printUsage(): void {
   console.log(`Usage: lynxget <url> [options]
 
+Output is markdown by default, preserving article structure (headings, links, lists).
+
 Options:
-  --json              Full JSON output (title, content, antibot detections, etc)
+  --json              Full JSON output (title, content, markdown, antibot detections, etc)
   --raw               Raw HTML output (no extraction)
   --detect            Show antibot detection only
-  -q, --quiet         Text content only (no metadata)
+  -q, --quiet         Markdown content only (no metadata)
+  --text              Plain text content only (no metadata, no markdown)
   --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
   -h, --help          Show this help message
 
@@ -133,12 +140,19 @@ export async function main(): Promise<void> {
       process.exit(1);
     }
 
-    if (opts.quiet) {
+    if (opts.text) {
       if (fetchResult.textContent) console.log(fetchResult.textContent);
       return;
     }
 
-    // Default output: metadata + text
+    const body = fetchResult.markdown || fetchResult.textContent || '';
+
+    if (opts.quiet) {
+      console.log(body);
+      return;
+    }
+
+    // Default output: metadata + markdown
     if (fetchResult.title) console.log(`Title: ${fetchResult.title}`);
     if (fetchResult.byline) console.log(`Author: ${fetchResult.byline}`);
     if (fetchResult.siteName) console.log(`Site: ${fetchResult.siteName}`);
@@ -151,7 +165,7 @@ export async function main(): Promise<void> {
     }
     console.log(`Fetched in ${fetchResult.latencyMs}ms`);
     console.log('---');
-    if (fetchResult.textContent) console.log(fetchResult.textContent);
+    console.log(body);
   } finally {
     await closeAllSessions();
   }

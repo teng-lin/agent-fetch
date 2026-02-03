@@ -37,6 +37,7 @@ export interface FetchResult {
   siteName?: string;
   publishedTime?: string;
   lang?: string;
+  markdown?: string;
 
   // Error fields
   error?: string;

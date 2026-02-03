@@ -75,6 +75,22 @@ describe('CLI parseArgs', () => {
     }
   });
 
+  it('sets --text flag', () => {
+    const result = parseArgs(['https://example.com', '--text']);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.opts.text).toBe(true);
+    }
+  });
+
+  it('text defaults to false', () => {
+    const result = parseArgs(['https://example.com']);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.opts.text).toBe(false);
+    }
+  });
+
   it('ignores unknown flags', () => {
     const result = parseArgs(['https://example.com', '--unknown']);
     expect(result.kind).toBe('ok');
