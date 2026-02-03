@@ -19,6 +19,8 @@ vi.mock('../extract/content-extractors.js', () => ({
 vi.mock('../sites/site-config.js', () => ({
   getSiteUserAgent: vi.fn(),
   getSiteReferer: vi.fn(),
+  siteUseWpRestApi: vi.fn().mockReturnValue(false),
+  getSiteWpJsonApiPath: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../fetch/archive-fallback.js', () => ({
@@ -37,7 +39,12 @@ vi.mock('../logger.js', () => ({
 import { httpRequest } from '../fetch/http-client.js';
 import { quickValidate } from '../fetch/content-validator.js';
 import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
-import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
+import {
+  getSiteUserAgent,
+  getSiteReferer,
+  siteUseWpRestApi,
+  getSiteWpJsonApiPath,
+} from '../sites/site-config.js';
 import { fetchFromArchives } from '../fetch/archive-fallback.js';
 
 describe('httpFetch', () => {
@@ -1115,5 +1122,166 @@ describe('WP REST API fallback', () => {
 
     expect(result.success).toBe(true);
     expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('tries WP REST API on insufficient_content validation failure', async () => {
+    const url = 'https://example.com/2024/01/my-article/';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/456';
+
+    // Page returns HTML with WP link tag but validator says insufficient_content
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: `<html><head><link rel="alternate" type="application/json" href="${apiUrl}" /></head><body>Short</body></html>`,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({
+      valid: false,
+      error: 'insufficient_content',
+      errorDetails: { wordCount: 10 },
+    });
+
+    // detectWpRestApi finds the API URL from HTML
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    // WP API returns full content
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'Full WP Article' },
+        content: { rendered: '<p>' + 'Full article content from WP API. '.repeat(50) + '</p>' },
+        excerpt: { rendered: '<p>Excerpt</p>' },
+        date_gmt: '2024-01-15T10:00:00',
+        _embedded: { author: [{ name: 'WP Author' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full WP Article');
+    expect(result.byline).toBe('WP Author');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses config wpJsonApiPath when HTML auto-detection fails', async () => {
+    const url = 'https://www.techinasia.com/my-article-slug';
+
+    // Page HTML has no WP link tag
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Short paywall content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // extractFromHtml returns short content (< 100 words, > 100 chars)
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Paywalled Article',
+      byline: null,
+      content: '<p>Subscribe to read more.</p>',
+      textContent: 'Subscribe to read more about this interesting topic here. '.repeat(3),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    // HTML detection returns null
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
+
+    // Config returns custom API path
+    vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce('/wp-json/techinasia/2.0/posts/');
+
+    // WP API returns full content
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'Full TechInAsia Article' },
+        content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
+        excerpt: { rendered: '<p>Excerpt</p>' },
+        date_gmt: '2024-06-01T08:00:00',
+        _embedded: { author: [{ name: 'TIA Author' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full TechInAsia Article');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    // Verify the constructed API URL uses the config path + slug
+    const apiCall = vi.mocked(httpRequest).mock.calls[1][0];
+    expect(apiCall).toContain('/wp-json/techinasia/2.0/posts/my-article-slug');
+  });
+
+  it('uses config useWpRestApi to construct standard WP API URL', async () => {
+    const url = 'https://www.crikey.com.au/2025/08/15/ai-regulation/';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Short paywall content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Paywalled',
+      byline: null,
+      content: '<p>Subscribe.</p>',
+      textContent: 'Subscribe to read this article about AI regulation today. '.repeat(3),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    // HTML detection returns null, no custom path
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
+    vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce(null);
+    vi.mocked(siteUseWpRestApi).mockReturnValueOnce(true);
+
+    // WP API returns full content (array for ?slug= queries)
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify([
+        {
+          title: { rendered: 'Full Crikey Article' },
+          content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
+          excerpt: { rendered: '<p>Excerpt</p>' },
+          date_gmt: '2025-08-15T10:00:00',
+          _embedded: { author: [{ name: 'Crikey Author' }] },
+        },
+      ]),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full Crikey Article');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    // Verify the constructed API URL uses standard WP path + slug
+    const apiCall = vi.mocked(httpRequest).mock.calls[1][0];
+    expect(apiCall).toContain('/wp-json/wp/v2/posts?slug=ai-regulation');
   });
 });
