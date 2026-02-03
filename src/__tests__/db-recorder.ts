@@ -113,11 +113,11 @@ export async function initializeDatabase(): Promise<void> {
     saveDatabaseToDisk();
   } else {
     // Migrate existing test_runs: add columns if they don't exist
+    const columnsResult = db.exec('PRAGMA table_info(test_runs)');
+    const existingColumns = new Set(columnsResult[0]?.values.map((row) => row[1] as string) ?? []);
     for (const col of ['os', 'network', 'preset']) {
-      try {
+      if (!existingColumns.has(col)) {
         db.run(`ALTER TABLE test_runs ADD COLUMN ${col} TEXT`);
-      } catch {
-        // Column already exists — ignore
       }
     }
   }

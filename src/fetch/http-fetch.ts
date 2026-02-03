@@ -382,9 +382,11 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       if (archiveResult) return archiveResult;
     }
 
-    logger.info({ url, latencyMs: Date.now() - startTime }, 'HTTP fetch succeeded');
+    const latencyMs = Date.now() - startTime;
+    logger.info({ url, latencyMs }, 'HTTP fetch succeeded');
 
     return successResult(url, startTime, extracted, {
+      latencyMs,
       antibot: antibotField,
       statusCode: response.statusCode,
       rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,

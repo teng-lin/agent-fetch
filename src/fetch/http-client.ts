@@ -5,6 +5,7 @@
 import httpcloak from 'httpcloak';
 import { logger } from '../logger.js';
 import { promises as dns } from 'dns';
+import { isIP } from 'net';
 
 /** httpcloak cookie shape (not exported by library) */
 interface HttpcloakCookie {
@@ -84,6 +85,16 @@ function isPrivateIP(ip: string): boolean {
  */
 export async function validateSSRF(url: string): Promise<string[]> {
   const hostname = new URL(url).hostname;
+
+  // If the hostname is already an IP address, validate it directly.
+  // dns.resolve4/resolve6 return empty results for IP literals, which
+  // would bypass the private-IP check below.
+  if (isIP(hostname)) {
+    if (isPrivateIP(hostname)) {
+      throw new Error(`SSRF protection: hostname ${hostname} is a private IP`);
+    }
+    return [hostname];
+  }
 
   try {
     // Resolve hostname to IP addresses (both IPv4 and IPv6 concurrently)
