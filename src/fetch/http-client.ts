@@ -5,6 +5,7 @@
 import httpcloak from 'httpcloak';
 import { logger } from '../logger.js';
 import { promises as dns } from 'dns';
+import { isIP } from 'net';
 
 /** httpcloak cookie shape (not exported by library) */
 interface HttpcloakCookie {
@@ -25,7 +26,7 @@ interface SessionMetadata {
   inFlightRequests: number;
 }
 
-/** Session cache per browser type */
+/** Session cache keyed by preset string */
 const sessionCache = new Map<string, SessionMetadata>();
 
 /** Mutex locks for session creation */
@@ -37,6 +38,7 @@ const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 const SESSION_MAX_REQUESTS = 10000; // Recycle after 10K requests
 const REQUEST_TIMEOUT_MS = 10000; // 10 second request timeout
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
+const DNS_TIMEOUT_MS = 5000;
 
 /**
  * Check if an IP address is private/internal.
@@ -84,6 +86,16 @@ function isPrivateIP(ip: string): boolean {
 export async function validateSSRF(url: string): Promise<string[]> {
   const hostname = new URL(url).hostname;
 
+  // If the hostname is already an IP address, validate it directly.
+  // dns.resolve4/resolve6 return empty results for IP literals, which
+  // would bypass the private-IP check below.
+  if (isIP(hostname)) {
+    if (isPrivateIP(hostname)) {
+      throw new Error(`SSRF protection: hostname ${hostname} is a private IP`);
+    }
+    return [hostname];
+  }
+
   try {
     // Resolve hostname to IP addresses (both IPv4 and IPv6 concurrently)
     const [ipv4Result, ipv6Result] = await Promise.allSettled([
@@ -123,16 +135,28 @@ export async function validateSSRF(url: string): Promise<string[]> {
   }
 }
 
+/** Run SSRF validation with a timeout to prevent DoS from slow DNS lookups. */
+function validateSSRFWithTimeout(url: string): Promise<string[]> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('DNS resolution timed out')), DNS_TIMEOUT_MS)
+  );
+  return Promise.race([validateSSRF(url), timeout]);
+}
+
+/** Default TLS preset */
+const DEFAULT_PRESET = httpcloak.Preset.CHROME_143;
+
 /**
- * Get or create httpcloak session for given browser type.
+ * Get or create httpcloak session for a given TLS preset.
  * Sessions are cached and reused across requests with proper concurrency control.
  * Sessions are automatically recycled after 1 hour or 10,000 requests to prevent memory leaks.
  */
-export async function getSession(
-  browserType: 'chromium' | 'firefox' = 'chromium'
-): Promise<httpcloak.Session> {
+export async function getSession(preset?: string): Promise<httpcloak.Session> {
+  const presetValue = preset ?? DEFAULT_PRESET;
+  const cacheKey = String(presetValue);
+
   // Check if session needs recycling
-  const metadata = sessionCache.get(browserType);
+  const metadata = sessionCache.get(cacheKey);
   if (metadata) {
     const age = Date.now() - metadata.created;
     const needsRecycling =
@@ -143,7 +167,7 @@ export async function getSession(
       if (metadata.inFlightRequests > 0) {
         logger.debug(
           {
-            browserType,
+            preset: cacheKey,
             age: Math.floor(age / 1000),
             requests: metadata.requestCount,
             inFlight: metadata.inFlightRequests,
@@ -159,7 +183,7 @@ export async function getSession(
 
       logger.info(
         {
-          browserType,
+          preset: cacheKey,
           age: Math.floor(age / 1000),
           requests: metadata.requestCount,
         },
@@ -170,10 +194,10 @@ export async function getSession(
       metadata.promise
         .then((session) => session.close())
         .catch((error) => {
-          logger.warn({ browserType, error: String(error) }, 'Error closing old session');
+          logger.warn({ preset: cacheKey, error: String(error) }, 'Error closing old session');
         });
 
-      sessionCache.delete(browserType);
+      sessionCache.delete(cacheKey);
     } else {
       // Session is healthy, increment counters atomically and return
       metadata.requestCount++;
@@ -183,13 +207,13 @@ export async function getSession(
   }
 
   // Acquire mutex lock to prevent race conditions
-  const existingLock = sessionLocks.get(browserType);
+  const existingLock = sessionLocks.get(cacheKey);
   if (existingLock) {
     // Wait for other thread to finish creating session
     await existingLock;
 
     // Check if session was created by other thread
-    const newMetadata = sessionCache.get(browserType);
+    const newMetadata = sessionCache.get(cacheKey);
     if (newMetadata) {
       newMetadata.requestCount++;
       newMetadata.inFlightRequests++;
@@ -202,21 +226,21 @@ export async function getSession(
   const lock = new Promise<void>((resolve) => {
     releaseLock = resolve;
   });
-  sessionLocks.set(browserType, lock);
+  sessionLocks.set(cacheKey, lock);
 
   try {
-    const preset =
-      browserType === 'firefox' ? httpcloak.Preset.FIREFOX_133 : httpcloak.Preset.CHROME_143;
-
-    logger.debug({ browserType, preset: preset.toString() }, 'Creating httpcloak session');
+    logger.debug({ preset: cacheKey }, 'Creating httpcloak session');
 
     const sessionPromise = (async () => {
       try {
-        return new httpcloak.Session({ preset, timeout: SESSION_TIMEOUT_SEC });
+        return new httpcloak.Session({ preset: presetValue, timeout: SESSION_TIMEOUT_SEC });
       } catch (error) {
         // Clean up failed session from cache
-        sessionCache.delete(browserType);
-        logger.error({ browserType, error: String(error) }, 'Failed to create httpcloak session');
+        sessionCache.delete(cacheKey);
+        logger.error(
+          { preset: cacheKey, error: String(error) },
+          'Failed to create httpcloak session'
+        );
         throw error;
       }
     })();
@@ -224,7 +248,7 @@ export async function getSession(
     // Attach unhandled rejection handler to prevent crashes
     sessionPromise.catch((error) => {
       logger.error(
-        { browserType, error: String(error) },
+        { preset: cacheKey, error: String(error) },
         'Session creation failed (cached promise)'
       );
     });
@@ -236,11 +260,11 @@ export async function getSession(
       inFlightRequests: 1, // Start at 1 for the current request
     };
 
-    sessionCache.set(browserType, newMetadata);
+    sessionCache.set(cacheKey, newMetadata);
     return sessionPromise;
   } finally {
     // Release lock
-    sessionLocks.delete(browserType);
+    sessionLocks.delete(cacheKey);
     releaseLock();
   }
 }
@@ -287,23 +311,19 @@ export interface HttpResponse {
 export async function httpRequest(
   url: string,
   headers: Record<string, string> = {},
-  browserType: 'chromium' | 'firefox' = 'chromium'
+  preset?: string
 ): Promise<HttpResponse> {
   let sessionMetadata: SessionMetadata | undefined;
+  const cacheKey = String(preset ?? DEFAULT_PRESET);
 
   try {
     // SSRF protection: validate URL and capture resolved IPs
-    // Wrap in timeout to prevent DoS from slow DNS lookups
-    const DNS_TIMEOUT_MS = 5000;
-    const dnsTimeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('DNS resolution timed out')), DNS_TIMEOUT_MS)
-    );
-    const preConnectionIPs = await Promise.race([validateSSRF(url), dnsTimeoutPromise]);
+    const preConnectionIPs = await validateSSRFWithTimeout(url);
 
     // Get session and atomically increment in-flight counter
     // (getSession() increments both requestCount and inFlightRequests)
-    const session = await getSession(browserType);
-    sessionMetadata = sessionCache.get(browserType);
+    const session = await getSession(preset);
+    sessionMetadata = sessionCache.get(cacheKey);
 
     logger.debug({ url, headers }, 'Making httpcloak request');
 
@@ -321,11 +341,7 @@ export async function httpRequest(
 
       // DNS rebinding protection: re-validate after connection
       if (preConnectionIPs.length > 0) {
-        const DNS_TIMEOUT_MS = 5000;
-        const postDnsTimeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('DNS resolution timed out')), DNS_TIMEOUT_MS)
-        );
-        const postConnectionIPs = await Promise.race([validateSSRF(url), postDnsTimeoutPromise]);
+        const postConnectionIPs = await validateSSRFWithTimeout(url);
 
         // Compare IP sets (order-independent comparison)
         const ipsMatch =

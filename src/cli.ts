@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 /**
- * lynxget CLI - stealth fetch with content extraction and antibot detection
- *
- * Usage:
- *   lynxget <url>             Extract article text
- *   lynxget <url> --json      Full JSON output (title, content, antibot, etc)
- *   lynxget <url> --raw       Raw HTML (no extraction)
- *   lynxget <url> --detect    Show antibot detection only
- *   lynxget <url> -q          Quiet (text content only, no metadata)
+ * CLI entry point for lynxget
  */
-import 'dotenv/config';
 import { fileURLToPath } from 'url';
 import { httpFetch } from './fetch/http-fetch.js';
 import { httpRequest, closeAllSessions } from './fetch/http-client.js';
@@ -21,6 +13,7 @@ interface CliOptions {
   raw: boolean;
   detect: boolean;
   quiet: boolean;
+  preset?: string;
 }
 
 type ParseResult =
@@ -34,38 +27,58 @@ export function parseArgs(args: string[]): ParseResult {
   let raw = false;
   let detect = false;
   let quiet = false;
+  let preset: string | undefined;
 
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg === '--json') json = true;
     else if (arg === '--raw') raw = true;
     else if (arg === '--detect') detect = true;
     else if (arg === '-q' || arg === '--quiet') quiet = true;
     else if (arg === '--help' || arg === '-h') return { kind: 'help' };
-    else if (!arg.startsWith('-')) positional.push(arg);
+    else if (arg === '--preset') {
+      if (i + 1 >= args.length) return { kind: 'error', message: '--preset requires a value' };
+      preset = args[++i];
+    } else if (!arg.startsWith('-')) positional.push(arg);
   }
 
   if (positional.length === 0) {
     return { kind: 'error', message: 'Missing required <url> argument' };
   }
 
-  return { kind: 'ok', opts: { url: positional[0], json, raw, detect, quiet } };
+  return {
+    kind: 'ok',
+    opts: {
+      url: positional[0],
+      json,
+      raw,
+      detect,
+      quiet,
+      preset: preset ?? process.env.LYNXGET_PRESET,
+    },
+  };
 }
 
 function printUsage(): void {
   console.log(`Usage: lynxget <url> [options]
 
 Options:
-  --json      Full JSON output (title, content, antibot detections, etc)
-  --raw       Raw HTML output (no extraction)
-  --detect    Show antibot detection only
-  -q, --quiet Text content only (no metadata)
-  -h, --help  Show this help message`);
+  --json              Full JSON output (title, content, antibot detections, etc)
+  --raw               Raw HTML output (no extraction)
+  --detect            Show antibot detection only
+  -q, --quiet         Text content only (no metadata)
+  --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
+  -h, --help          Show this help message
+
+Environment:
+  LYNXGET_PRESET      Default TLS preset (overridden by --preset flag)`);
 }
 
 export async function main(): Promise<void> {
   const result = parseArgs(process.argv.slice(2));
 
   if (result.kind !== 'ok') {
+    if (result.kind === 'error') console.error(`Error: ${result.message}`);
     printUsage();
     process.exit(result.kind === 'help' ? 0 : 1);
   }
@@ -75,43 +88,33 @@ export async function main(): Promise<void> {
   try {
     // --raw mode: fetch HTML without extraction
     if (opts.raw) {
-      const response = await httpRequest(opts.url);
-      if (response.html) {
-        process.stdout.write(response.html);
-      } else {
-        console.error(`Error: ${response.error || `HTTP ${response.statusCode}`}`);
+      const response = await httpRequest(opts.url, {}, opts.preset);
+      if (response.statusCode !== 200) {
+        console.error(`HTTP ${response.statusCode}`);
         process.exit(1);
       }
+      console.log(response.html);
       return;
     }
 
     // --detect mode: antibot detection only
     if (opts.detect) {
-      const response = await httpRequest(opts.url);
+      const response = await httpRequest(opts.url, {}, opts.preset);
       const cookieStrings = response.cookies.map((c) => `${c.name}=${c.value}`);
       const responseDetections = detectFromResponse(response.headers, cookieStrings);
-      const htmlDetections = response.html ? detectFromHtml(response.html) : [];
-      const detections = mergeDetections(responseDetections, htmlDetections);
+      const htmlDetections = detectFromHtml(response.html || '');
+      const all = mergeDetections(responseDetections, htmlDetections);
 
-      if (opts.json) {
-        console.log(JSON.stringify({ url: opts.url, detections }, null, 2));
-      } else if (detections.length === 0) {
-        console.log('No antibot protection detected.');
+      if (all.length === 0) {
+        console.log('No antibot providers detected');
       } else {
-        console.log(`Antibot detections for ${opts.url}:\n`);
-        for (const d of detections) {
-          console.log(`  ${d.name} (${d.category})`);
-          console.log(`    Confidence: ${d.confidence}%`);
-          console.log(`    Action: ${d.suggestedAction}`);
-          console.log(`    Evidence: ${d.evidence.join(', ')}`);
-          console.log('');
-        }
+        console.log(JSON.stringify({ detections: all }, null, 2));
       }
       return;
     }
 
     // Default: fetch + extract
-    const fetchResult = await httpFetch(opts.url);
+    const fetchResult = await httpFetch(opts.url, { preset: opts.preset });
 
     if (opts.json) {
       console.log(JSON.stringify(fetchResult, null, 2));

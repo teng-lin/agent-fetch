@@ -14,7 +14,6 @@
 import { describe, it, expect } from 'vitest';
 import { httpFetch } from '../fetch/http-fetch.js';
 import type { SiteTestConfig } from './fixtures/types.js';
-import type { FetchResult } from '../fetch/types.js';
 import { loadFixtures, runWithConcurrency, filterTestCases, wordCount } from './e2e-helpers.js';
 import { recordTestResult, startTestRun, endTestRun } from './db-recorder.js';
 
@@ -52,13 +51,6 @@ function getFetchTestCases(configs: SiteTestConfig[], testSet: string): FetchTes
   return cases;
 }
 
-/**
- * Run fetch via local httpFetch().
- */
-async function runFetch(url: string): Promise<FetchResult> {
-  return httpFetch(url);
-}
-
 describe('E2E Fetch Tests', () => {
   const configs = loadFixtures();
 
@@ -85,7 +77,7 @@ describe('E2E Fetch Tests', () => {
     console.log('');
 
     // Start a new test run
-    startTestRun('fetch');
+    startTestRun({ runType: 'fetch', preset: process.env.LYNXGET_PRESET });
     let passCount = 0;
     let failCount = 0;
 
@@ -97,8 +89,18 @@ describe('E2E Fetch Tests', () => {
       console.log(`Testing ${tc.site}...`);
 
       try {
-        const result = await runFetch(tc.url);
-        recordTestResult(tc.site, result, tc.minWords);
+        const result = await httpFetch(tc.url);
+        recordTestResult({
+          testName: tc.site,
+          url: tc.url,
+          status: result.success ? 'pass' : 'fail',
+          httpStatus: result.statusCode ?? undefined,
+          fetchDurationMs: result.latencyMs,
+          extractStrategy: result.extractionMethod ?? undefined,
+          contentLength: result.textContent?.length,
+          errorMessage: result.error,
+          antibotDetections: result.antibot?.map((d) => d.provider),
+        });
         const words = wordCount(result.textContent);
         console.log(`${tc.site}: ${result.success ? 'OK' : 'FAIL'} - ${words} words`);
 
@@ -145,7 +147,7 @@ describe('E2E Fetch Tests', () => {
     });
 
     // End the test run with statistics
-    endTestRun(filteredCases.length, passCount, failCount);
+    endTestRun(passCount, failCount);
 
     if (transientSkips.length > 0) {
       console.log(`\n=== TRANSIENT SKIPS (${transientSkips.length}) ===`);
