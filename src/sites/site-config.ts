@@ -35,6 +35,8 @@ function loadJsonSiteConfigs(): Record<string, SiteConfig> {
       if (typeof cfg.useNextData === 'boolean') config.useNextData = cfg.useNextData;
       if (typeof cfg.nextDataPath === 'string') config.nextDataPath = cfg.nextDataPath;
       if (typeof cfg.notes === 'string') config.notes = cfg.notes;
+      if (typeof cfg.useWpRestApi === 'boolean') config.useWpRestApi = cfg.useWpRestApi;
+      if (typeof cfg.wpJsonApiPath === 'string') config.wpJsonApiPath = cfg.wpJsonApiPath;
       if (Array.isArray(cfg.archiveSelectors)) {
         config.archiveSelectors = cfg.archiveSelectors.map(String);
       }
@@ -79,6 +81,10 @@ export interface SiteConfig {
   nextDataPath?: string;
   /** Optional notes about site configuration */
   notes?: string;
+  /** Use WordPress REST API for content extraction */
+  useWpRestApi?: boolean;
+  /** Custom WP JSON API path (e.g. '/wp-json/techinasia/2.0/posts/') */
+  wpJsonApiPath?: string;
 }
 
 // --- Zod validation schema ---
@@ -94,6 +100,8 @@ export const SiteConfigSchema = z.object({
   useNextData: z.boolean().optional(),
   nextDataPath: z.string().optional(),
   notes: z.string().optional(),
+  useWpRestApi: z.boolean().optional(),
+  wpJsonApiPath: z.string().optional(),
 });
 
 // --- Module-level variable ---
@@ -221,6 +229,20 @@ export function sitePreferJsonLd(url: string): boolean {
  */
 export function siteUseNextData(url: string): boolean {
   return getSiteConfig(url)?.useNextData ?? false;
+}
+
+/**
+ * Check if a site uses WordPress REST API extraction
+ */
+export function siteUseWpRestApi(url: string): boolean {
+  return getSiteConfig(url)?.useWpRestApi ?? false;
+}
+
+/**
+ * Get the custom WP JSON API path for a site, or null if not configured
+ */
+export function getSiteWpJsonApiPath(url: string): string | null {
+  return getSiteConfig(url)?.wpJsonApiPath ?? null;
 }
 
 /**

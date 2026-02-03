@@ -9,6 +9,8 @@ import {
   shouldBlockRequest,
   sitePreferJsonLd,
   siteUseNextData,
+  siteUseWpRestApi,
+  getSiteWpJsonApiPath,
   validateSiteConfigs,
   getSiteConfigStats,
   getSiteCount,
@@ -167,6 +169,39 @@ describe('sites/site-config', () => {
       expect(domains).toContain('example.com');
       expect(domains).toContain('test.example.org');
       expect(domains).toContain('demo.example.net');
+    });
+  });
+
+  describe('siteUseWpRestApi', () => {
+    it('returns true for crikey.com.au', () => {
+      expect(siteUseWpRestApi('https://www.crikey.com.au/article')).toBe(true);
+    });
+
+    it('returns true for nationalreview.com', () => {
+      expect(siteUseWpRestApi('https://www.nationalreview.com/article')).toBe(true);
+    });
+
+    it('returns false for unconfigured site', () => {
+      expect(siteUseWpRestApi('https://github.com/page')).toBe(false);
+    });
+
+    it('returns false for unknown domain', () => {
+      expect(siteUseWpRestApi('https://unknown.example.info/page')).toBe(false);
+    });
+  });
+
+  describe('getSiteWpJsonApiPath', () => {
+    it('returns custom path for techinasia.com', () => {
+      const path = getSiteWpJsonApiPath('https://www.techinasia.com/article');
+      expect(path).toBe('/wp-json/techinasia/2.0/posts/');
+    });
+
+    it('returns null for sites without custom path', () => {
+      expect(getSiteWpJsonApiPath('https://www.crikey.com.au/article')).toBeNull();
+    });
+
+    it('returns null for unconfigured site', () => {
+      expect(getSiteWpJsonApiPath('https://github.com/page')).toBeNull();
     });
   });
 

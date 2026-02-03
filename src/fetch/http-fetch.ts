@@ -7,7 +7,12 @@ import { quickValidate } from './content-validator.js';
 import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
 import { fetchFromArchives } from './archive-fallback.js';
 import { detectFromResponse, detectFromHtml, mergeDetections } from '../antibot/detector.js';
-import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
+import {
+  getSiteUserAgent,
+  getSiteReferer,
+  siteUseWpRestApi,
+  getSiteWpJsonApiPath,
+} from '../sites/site-config.js';
 import { logger } from '../logger.js';
 import type { ExtractionResult } from '../extract/types.js';
 import type { FetchResult, ValidationError } from './types.js';
@@ -171,7 +176,10 @@ async function tryWpRestApiExtraction(
 
     if (!response.success || !response.html) return null;
 
-    const json = JSON.parse(response.html);
+    const raw = JSON.parse(response.html);
+    // WP REST API returns an array for ?slug= queries, single object for /posts/123
+    const json = Array.isArray(raw) ? raw[0] : raw;
+    if (!json) return null;
     const contentHtml = json.content?.rendered;
     if (!contentHtml || typeof contentHtml !== 'string') return null;
 
@@ -199,6 +207,77 @@ async function tryWpRestApiExtraction(
     logger.debug({ apiUrl, error: String(e) }, 'WordPress REST API extraction failed');
     return null;
   }
+}
+
+/**
+ * Extract the last non-empty path segment from a URL to use as a post slug.
+ */
+function extractSlugFromUrl(url: string): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+    const segments = pathname.split('/').filter(Boolean);
+    return segments.length > 0 ? segments[segments.length - 1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve WP REST API URL using auto-detection from HTML, then config-driven construction.
+ * Returns the API endpoint URL or null if no WP API is available.
+ *
+ * Order of operations:
+ * 1. Auto-detect WP API URL from HTML (<link rel="alternate" type="application/json">)
+ * 2. If not found + site has wpJsonApiPath -> construct custom API URL from slug
+ * 3. If not found + site has useWpRestApi -> construct standard API URL from slug
+ */
+function resolveWpApiUrl(html: string, url: string): string | null {
+  // 1. Auto-detect from HTML
+  const detected = detectWpRestApi(parseHTML(html).document, url);
+  if (detected) return detected;
+
+  // 2. Config-driven: custom API path
+  const customPath = getSiteWpJsonApiPath(url);
+  if (customPath) {
+    const slug = extractSlugFromUrl(url);
+    if (slug) return `${new URL(url).origin}${customPath}${encodeURIComponent(slug)}`;
+  }
+
+  // 3. Config-driven: standard WP REST API
+  if (siteUseWpRestApi(url)) {
+    const slug = extractSlugFromUrl(url);
+    if (slug) return `${new URL(url).origin}/wp-json/wp/v2/posts?slug=${encodeURIComponent(slug)}`;
+  }
+
+  return null;
+}
+
+/**
+ * Try WP REST API fallback and wrap the result into a FetchResult.
+ * Returns a success FetchResult if API returns sufficient content, null otherwise.
+ */
+async function tryWpRestApiFallback(
+  html: string,
+  url: string,
+  startTime: number,
+  response: { statusCode: number; html?: string },
+  extracted: ExtractionResult | null,
+  preset: string | undefined,
+  antibot: AntibotDetection[] | undefined
+): Promise<FetchResult | null> {
+  const wpApiUrl = resolveWpApiUrl(html, url);
+  if (!wpApiUrl) return null;
+
+  const result = await tryWpRestApiExtraction(wpApiUrl, extracted, preset);
+  if (!result) return null;
+
+  logger.info({ url, apiUrl: wpApiUrl }, 'Recovered content from WP REST API');
+  return successResult(url, startTime, result, {
+    antibot,
+    statusCode: response.statusCode,
+    rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
+    extractionMethod: 'wp-rest-api',
+  });
 }
 
 /**
@@ -365,8 +444,19 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         }
       }
 
-      // Try archive fallback for recoverable validation errors
+      // Try WP REST API before archive for validation failures
       if (ARCHIVE_FALLBACK_ERRORS.has(validation.error!)) {
+        const wpFallback = await tryWpRestApiFallback(
+          response.html,
+          url,
+          startTime,
+          response,
+          null,
+          preset,
+          antibotField
+        );
+        if (wpFallback) return wpFallback;
+
         const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
         if (archiveResult) return archiveResult;
       }
@@ -391,7 +481,18 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     const extracted = extractFromHtml(response.html, url);
 
     if (!extracted) {
-      // Try archive fallback when extraction returns null
+      // Try WP REST API before archive when extraction returns null
+      const wpFallback = await tryWpRestApiFallback(
+        response.html,
+        url,
+        startTime,
+        response,
+        null,
+        preset,
+        antibotField
+      );
+      if (wpFallback) return wpFallback;
+
       const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
       if (archiveResult) return archiveResult;
 
@@ -411,7 +512,18 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
 
     // Handle insufficient extracted content
     if (!extracted.textContent || extracted.textContent.trim().length < MIN_CONTENT_LENGTH) {
-      // Try archive fallback for insufficient content
+      // Try WP REST API before archive for insufficient content
+      const wpFallback = await tryWpRestApiFallback(
+        response.html,
+        url,
+        startTime,
+        response,
+        extracted,
+        preset,
+        antibotField
+      );
+      if (wpFallback) return wpFallback;
+
       const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
       if (archiveResult) return archiveResult;
 
@@ -434,19 +546,16 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     const wordCount = extracted.textContent!.split(/\s+/).length;
     if (wordCount < MIN_GOOD_WORD_COUNT) {
       // Try WP REST API first (faster, more reliable than archives)
-      const wpApiUrl = detectWpRestApi(parseHTML(response.html).document, url);
-      if (wpApiUrl) {
-        const wpResult = await tryWpRestApiExtraction(wpApiUrl, extracted, preset);
-        if (wpResult && (wpResult.textContent?.length ?? 0) >= MIN_CONTENT_LENGTH) {
-          logger.info({ url, apiUrl: wpApiUrl }, 'Recovered content from WP REST API');
-          return successResult(url, startTime, wpResult, {
-            antibot: antibotField,
-            statusCode: response.statusCode,
-            rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
-            extractionMethod: 'wp-rest-api',
-          });
-        }
-      }
+      const wpFallback = await tryWpRestApiFallback(
+        response.html,
+        url,
+        startTime,
+        response,
+        extracted,
+        preset,
+        antibotField
+      );
+      if (wpFallback) return wpFallback;
 
       // Fall back to archive services
       logger.debug({ url, wordCount }, 'Low word count, trying archive for fuller content');
