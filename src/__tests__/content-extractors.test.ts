@@ -11,6 +11,7 @@ import {
   tryNextDataExtraction,
   tryUnfluffExtraction,
   tryTextDensityExtraction,
+  tryNextRscExtraction,
   extractFromHtml,
 } from '../extract/content-extractors.js';
 import {
@@ -47,6 +48,10 @@ function loremText(n: number): string {
 function makeDoc(html: string): Document {
   return parseHTML(html).document;
 }
+
+/** Realistic article text for RSC extraction tests */
+const RSC_ARTICLE_TEXT =
+  'The global economy has undergone a remarkable transformation over the past decade, driven by rapid advances in artificial intelligence and renewable energy technologies. Economists around the world have noted that the pace of change has accelerated beyond what most forecasters predicted even five years ago. New industries have emerged while traditional sectors have adapted or declined. Workers in every country face a shifting landscape of opportunity and challenge. The implications for policy, education, and social systems are profound and far-reaching. Governments are scrambling to develop frameworks that can keep pace with innovation while protecting citizens from disruption and inequality.';
 
 describe('content-extractors', () => {
   beforeEach(() => {
@@ -448,6 +453,52 @@ describe('content-extractors', () => {
     });
   });
 
+  describe('tryNextRscExtraction', () => {
+    function makeRscPage(articleContent: string): string {
+      const escaped = JSON.stringify(articleContent).slice(1, -1); // strip outer quotes
+      return `<!doctype html><html lang="en"><head><title>RSC Test Article</title><meta property="og:title" content="RSC Test Article Title"/><meta property="og:site_name" content="Test Site"/><meta property="article:published_time" content="2024-06-15T12:00:00Z"/></head><body><article><p>Short DOM content here.</p></article><script>self.__next_f.push([2,null])</script><script>self.__next_f.push([1,"0:[\\"$\\",\\"html\\",null,{}]\\n1:I[123,[],\\"\\"]\\n"])</script><script>self.__next_f.push([1,"2:T320,"])</script><script>self.__next_f.push([1,"${escaped}"])</script></body></html>`;
+    }
+
+    it('returns null when no RSC push calls present', () => {
+      const html = '<html><body><p>Normal page</p></body></html>';
+      expect(tryNextRscExtraction(html, 'https://example.com')).toBeNull();
+    });
+
+    it('extracts article text from RSC payload', () => {
+      const html = makeRscPage(RSC_ARTICLE_TEXT);
+      const result = tryNextRscExtraction(html, 'https://example.com/rsc');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('next-rsc');
+      expect(result!.textContent!.length).toBeGreaterThan(GOOD_CONTENT_LENGTH);
+      expect(result!.textContent).not.toContain('$L');
+      expect(result!.textContent).not.toContain('function(');
+    });
+
+    it('extracts metadata from the DOM', () => {
+      const html = makeRscPage(RSC_ARTICLE_TEXT);
+      const result = tryNextRscExtraction(html, 'https://example.com/rsc');
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('RSC Test Article Title');
+      expect(result!.siteName).toBe('Test Site');
+      expect(result!.publishedTime).toBe('2024-06-15T12:00:00Z');
+    });
+
+    it('filters out JavaScript and HTML-heavy segments', () => {
+      const html = `<html><body><script>self.__next_f.push([1,"1:T100,function() { var x = 1; return x + 2; } function() { var y = 3; } function() { var z = 4; } () => {} () => {} () => {}"])</script></body></html>`;
+      expect(tryNextRscExtraction(html, 'https://example.com')).toBeNull();
+    });
+
+    it('returns null when extracted text is below threshold', () => {
+      const html = `<html><body><script>self.__next_f.push([1,"1:Ta,Short text"])</script></body></html>`;
+      expect(tryNextRscExtraction(html, 'https://example.com')).toBeNull();
+    });
+
+    it('skips type-0 and type-2 chunks', () => {
+      const html = `<html><body><script>self.__next_f.push([0,"bootstrap"])</script><script>self.__next_f.push([2,null])</script></body></html>`;
+      expect(tryNextRscExtraction(html, 'https://example.com')).toBeNull();
+    });
+  });
+
   describe('extractFromHtml', () => {
     it('extracts with default strategy', () => {
       const content = loremText(GOOD_CONTENT_LENGTH);
@@ -493,6 +544,13 @@ describe('content-extractors', () => {
       const result = extractFromHtml(html, 'https://example.com/next-article');
       expect(result).not.toBeNull();
       expect(result!.method).toBe('next-data');
+    });
+
+    it('prefers RSC over Readability when RSC has >2x content', () => {
+      const html = `<!doctype html><html lang="en"><head><title>RSC Test</title></head><body><article><p>Short.</p></article><script>self.__next_f.push([2,null])</script><script>self.__next_f.push([1,"2:T320,"])</script><script>self.__next_f.push([1,"${JSON.stringify(RSC_ARTICLE_TEXT).slice(1, -1)}"])</script></body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/rsc');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('next-rsc');
     });
 
     it('returns null when all strategies fail', () => {

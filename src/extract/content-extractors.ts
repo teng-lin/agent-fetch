@@ -58,8 +58,11 @@ const REMOVE_SELECTORS = [
   '.comments',
 ];
 
-/** Minimum length ratio for text-density to override Readability */
+/** Minimum length ratio for text-density/RSC to override Readability */
 const COMPARATOR_LENGTH_RATIO = 2;
+
+/** Minimum length for RSC text segments to be considered article content */
+const RSC_MIN_SEGMENT_LENGTH = 100;
 
 /** JSON-LD article types that contain extractable content */
 const ARTICLE_TYPES = [
@@ -536,6 +539,113 @@ export function tryTextDensityExtraction(html: string, url: string): ExtractionR
 }
 
 /**
+ * Check whether a string looks like natural language (not HTML/JS).
+ */
+function isNaturalLanguage(text: string): boolean {
+  const len = text.length;
+  if (len === 0) return false;
+
+  // Reject HTML-heavy content (more than 1 tag per 100 chars)
+  const tagCount = text.split('<').length - 1;
+  if (tagCount > len / 100) return false;
+
+  // Reject JS-heavy content
+  if (text.includes('function(') || text.includes('function (')) return false;
+  const arrowCount = text.split('=>').length - 1;
+  if (arrowCount > 3) return false;
+
+  // Must have word-like content: spaces between words
+  const spaceCount = text.split(' ').length - 1;
+  return spaceCount / len > 0.1;
+}
+
+/**
+ * Strategy 7: Extract from Next.js RSC (React Server Components) streaming payload.
+ * App Router pages embed article text inside self.__next_f.push() script calls
+ * rather than rendering it into the DOM.
+ */
+export function tryNextRscExtraction(html: string, url: string): ExtractionResult | null {
+  try {
+    if (!html.includes('self.__next_f.push(')) return null;
+
+    // Extract all self.__next_f.push([...]) calls, anchored on </script> boundary
+    const pushPattern = /self\.__next_f\.push\(([\s\S]*?)\)<\/script>/g;
+    const chunks: string[] = [];
+    let match;
+    while ((match = pushPattern.exec(html)) !== null) {
+      try {
+        const arr = JSON.parse(match[1]);
+        if (Array.isArray(arr) && arr[0] === 1 && typeof arr[1] === 'string') {
+          chunks.push(arr[1]);
+        }
+      } catch {
+        // Skip malformed JSON (some chunks contain unescaped JS)
+      }
+    }
+
+    if (chunks.length === 0) return null;
+
+    // Concatenate all type-1 chunks into a single stream
+    const stream = chunks.join('');
+
+    // Extract text segments from RSC T markers: id:Thexlen,<content>
+    const textSegments: string[] = [];
+    const tMarkerPattern = /[0-9a-f]+:T[0-9a-f]+,/g;
+    let tMatch;
+    const tPositions: number[] = [];
+    while ((tMatch = tMarkerPattern.exec(stream)) !== null) {
+      tPositions.push(tMatch.index + tMatch[0].length);
+    }
+
+    // For each T marker, extract text until next RSC row prefix or end
+    const rowPrefixPattern = /\n[0-9a-f]+:[A-Z["$]/;
+    for (const pos of tPositions) {
+      const rest = stream.slice(pos);
+      const nextRow = rest.search(rowPrefixPattern);
+      const segment = nextRow === -1 ? rest : rest.slice(0, nextRow);
+
+      if (segment.length >= RSC_MIN_SEGMENT_LENGTH && isNaturalLanguage(segment)) {
+        textSegments.push(segment.trim());
+      }
+    }
+
+    // Also check for continuation chunks (raw text with no row prefix)
+    for (const chunk of chunks) {
+      if (
+        chunk.length >= RSC_MIN_SEGMENT_LENGTH &&
+        !/^[0-9a-f]+:/.test(chunk) &&
+        isNaturalLanguage(chunk)
+      ) {
+        textSegments.push(chunk.trim());
+      }
+    }
+
+    // Deduplicate (continuation chunks may overlap with T marker extraction)
+    const unique = [...new Set(textSegments)];
+    const textContent = unique.join('\n\n');
+
+    if (textContent.length < MIN_CONTENT_LENGTH) return null;
+
+    const { document } = parseHTML(html);
+
+    return {
+      title: extractTitle(document),
+      byline: null,
+      content: textContent,
+      textContent,
+      excerpt: generateExcerpt(null, textContent),
+      siteName: extractSiteName(document),
+      publishedTime: extractPublishedTime(document),
+      lang: document.documentElement.lang || null,
+      method: 'next-rsc',
+    };
+  } catch (e) {
+    logger.debug({ url, error: String(e) }, 'Next.js RSC extraction failed');
+    return null;
+  }
+}
+
+/**
  * Multi-strategy extraction from HTML
  * Exported for testing and direct HTML extraction use cases
  * Uses linkedom for DOM parsing (crash-resistant, no CSS parsing errors)
@@ -575,6 +685,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   const selectorResult = trySelectorExtraction(document, url);
   const textDensityResult = tryTextDensityExtraction(html, url);
   const unfluffResult = tryUnfluffExtraction(html, url);
+  const rscResult = tryNextRscExtraction(html, url);
 
   // Comparator: prefer text-density if it found significantly more content
   // than Readability (>2x length). Catches pages where Readability trims too aggressively.
@@ -593,6 +704,19 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     }
   }
 
+  // Comparator: prefer RSC if it found significantly more content than Readability
+  if (effectiveReadability && rscResult) {
+    const readLen = effectiveReadability.textContent?.length ?? 0;
+    const rscLen = rscResult.textContent?.length ?? 0;
+    if (rscLen > readLen * COMPARATOR_LENGTH_RATIO && rscLen >= GOOD_CONTENT_LENGTH) {
+      logger.debug(
+        { url, readabilityLen: readLen, rscLen },
+        'RSC found significantly more content, preferring it over Readability'
+      );
+      effectiveReadability = null;
+    }
+  }
+
   // All results for metadata composition (use readabilityResult, not effectiveReadability,
   // so Readability's metadata remains available even when the comparator prefers text-density)
   const allResults = [
@@ -601,11 +725,13 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     selectorResult,
     textDensityResult,
     unfluffResult,
+    rscResult,
   ];
 
   // Pick winner by threshold (same priority order as before)
   const candidates: [ExtractionResult | null, number][] = [
     [effectiveReadability, GOOD_CONTENT_LENGTH],
+    [rscResult, GOOD_CONTENT_LENGTH],
     [jsonLdResult, GOOD_CONTENT_LENGTH],
     [selectorResult, MIN_CONTENT_LENGTH],
     [textDensityResult, MIN_CONTENT_LENGTH],
@@ -621,7 +747,12 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
 
   // Return best partial result with composition
   const partialResult =
-    effectiveReadability ?? jsonLdResult ?? selectorResult ?? textDensityResult ?? unfluffResult;
+    effectiveReadability ??
+    rscResult ??
+    jsonLdResult ??
+    selectorResult ??
+    textDensityResult ??
+    unfluffResult;
   if (partialResult) {
     return composeMetadata(partialResult, allResults, jsonLdMeta);
   }
