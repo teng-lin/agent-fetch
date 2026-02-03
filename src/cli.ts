@@ -58,7 +58,7 @@ export function parseArgs(args: string[]): ParseResult {
       detect,
       quiet,
       text,
-      preset: preset ?? process.env.LYNXGET_PRESET,
+      preset,
     },
   };
 }
@@ -75,10 +75,7 @@ Options:
   -q, --quiet         Markdown content only (no metadata)
   --text              Plain text content only (no metadata, no markdown)
   --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
-  -h, --help          Show this help message
-
-Environment:
-  LYNXGET_PRESET      Default TLS preset (overridden by --preset flag)`);
+  -h, --help          Show this help message`);
 }
 
 export async function main(): Promise<void> {

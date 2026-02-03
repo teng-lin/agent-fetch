@@ -114,40 +114,6 @@ describe('CLI parseArgs', () => {
       expect(result.opts.preset).toBeUndefined();
     }
   });
-
-  it('reads LYNXGET_PRESET env var as fallback', () => {
-    const originalPreset = process.env.LYNXGET_PRESET;
-    process.env.LYNXGET_PRESET = 'ios-safari-18';
-
-    const result = parseArgs(['https://example.com']);
-    expect(result.kind).toBe('ok');
-    if (result.kind === 'ok') {
-      expect(result.opts.preset).toBe('ios-safari-18');
-    }
-
-    if (originalPreset) {
-      process.env.LYNXGET_PRESET = originalPreset;
-    } else {
-      delete process.env.LYNXGET_PRESET;
-    }
-  });
-
-  it('--preset flag overrides LYNXGET_PRESET env var', () => {
-    const originalPreset = process.env.LYNXGET_PRESET;
-    process.env.LYNXGET_PRESET = 'ios-safari-18';
-
-    const result = parseArgs(['https://example.com', '--preset', 'android-chrome-143']);
-    expect(result.kind).toBe('ok');
-    if (result.kind === 'ok') {
-      expect(result.opts.preset).toBe('android-chrome-143');
-    }
-
-    if (originalPreset) {
-      process.env.LYNXGET_PRESET = originalPreset;
-    } else {
-      delete process.env.LYNXGET_PRESET;
-    }
-  });
 });
 
 describe('CLI main', () => {

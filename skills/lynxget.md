@@ -5,7 +5,7 @@ description: Fetch and extract content from URLs using lynxget CLI with stealth 
 
 # LynxGet Skill
 
-**A better WebFetch for Claude Code.** LynxGet is a CLI/library that fetches web content with Chrome TLS fingerprinting, bypassing bot detection that blocks standard HTTP clients. No server required - runs as a local CLI tool.
+**A better WebFetch for Claude Code.** LynxGet is a CLI/library that fetches web content with Chrome TLS fingerprinting, evading bot detection that blocks standard HTTP clients. No server required - runs as a local CLI tool. Output is markdown by default, preserving article structure.
 
 ## When to Use This Skill
 
@@ -33,7 +33,7 @@ npm install -g lynxget
 
 ### `/lynxget <url>` - Fetch and Extract Article
 
-**Default usage.** Fetches URL with stealth TLS fingerprinting and extracts article content.
+**Default usage.** Fetches URL with stealth TLS fingerprinting and extracts article content as markdown.
 
 ```bash
 npx lynxget "<url>" --json
@@ -51,7 +51,7 @@ date: {publishedTime || "Unknown"}
 fetched_in: {latencyMs}ms
 ---
 
-{textContent}
+{markdown || textContent}
 ```
 
 **If fetch fails**, check `suggestedAction` in the JSON:
@@ -90,12 +90,20 @@ Fetch raw HTML without extraction. Useful for debugging or custom parsing.
 npx lynxget "<url>" --raw
 ```
 
-### `/lynxget quiet <url>` - Text Only
+### `/lynxget quiet <url>` - Markdown Only
 
-Just the article text, no metadata.
+Just the article markdown, no metadata.
 
 ```bash
 npx lynxget "<url>" -q
+```
+
+### `/lynxget text <url>` - Plain Text Only
+
+Plain text content without formatting or metadata.
+
+```bash
+npx lynxget "<url>" --text
 ```
 
 ## Error Handling
@@ -147,13 +155,14 @@ const htmlDetections = detectFromHtml(html);
 
 ## Comparison to WebFetch
 
-| Feature            | LynxGet CLI   | WebFetch      |
-| ------------------ | ------------- | ------------- |
-| **Speed**          | 200-700ms     | 2-5s          |
-| **Bot protection** | Chrome TLS FP | Basic headers |
-| **JavaScript**     | No            | Yes           |
-| **Install needed** | Yes (npm)     | No (built-in) |
-| **Self-hosted**    | Yes           | No            |
-| **Antibot detect** | 30+ systems   | None          |
+| Feature            | LynxGet CLI        | WebFetch      |
+| ------------------ | ------------------ | ------------- |
+| **Speed**          | 200-700ms          | 2-5s          |
+| **Bot protection** | Chrome TLS FP      | Basic headers |
+| **JavaScript**     | No                 | Yes           |
+| **Install needed** | Yes (npm)          | No (built-in) |
+| **Self-hosted**    | Yes                | No            |
+| **Antibot detect** | 30+ systems        | None          |
+| **Output format**  | Markdown (default) | Plain text    |
 
 **Recommendation:** Use WebFetch first. Fall back to lynxget when WebFetch fails on protected sites.

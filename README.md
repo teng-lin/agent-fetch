@@ -4,7 +4,7 @@
 <img src="./assets/lynxget.svg" alt="LynxGet Logo" width="600">
 </p>
 
-**wget for the AI agent age** - Stealth fetch with Chrome TLS fingerprinting, multi-strategy content extraction, and anti-bot detection. Fetch articles from the real web without getting blocked.
+**wget for the AI agent age** - Stealth web fetcher with Chrome TLS fingerprinting, multi-strategy content extraction, and anti-bot detection awareness.
 
 ## Features
 
@@ -27,20 +27,23 @@ npm install lynxget
 ### CLI
 
 ```bash
-# Extract article text
+# Extract article as markdown (default)
 npx lynxget https://example.com/article
 
 # Full JSON output
 npx lynxget https://example.com/article --json
+
+# Markdown content only (no metadata)
+npx lynxget https://example.com/article -q
+
+# Plain text content only (no formatting)
+npx lynxget https://example.com/article --text
 
 # Raw HTML (no extraction)
 npx lynxget https://example.com/article --raw
 
 # Anti-bot detection only
 npx lynxget https://example.com/article --detect
-
-# Text content only (quiet mode)
-npx lynxget https://example.com/article -q
 ```
 
 ### Programmatic
@@ -86,6 +89,7 @@ const result = await httpFetch('https://example.com/article');
 | `byline`          | `string?`             | Author attribution                                                   |
 | `content`         | `string?`             | Extracted HTML content                                               |
 | `textContent`     | `string?`             | Plain text content                                                   |
+| `markdown`        | `string?`             | Markdown-formatted content (preserves headings, links, lists)        |
 | `excerpt`         | `string?`             | Opening paragraph                                                    |
 | `siteName`        | `string?`             | Publication name                                                     |
 | `publishedTime`   | `string?`             | ISO 8601 publish date                                                |
@@ -212,6 +216,25 @@ const session = await getSession('chromium');
 await closeAllSessions();
 ```
 
+### Archive Fallback
+
+Fetch content from web archives when direct fetch fails.
+
+```typescript
+import { fetchFromWayback, fetchFromArchiveIs, fetchFromArchives } from 'lynxget';
+
+// Try Wayback Machine first, then Archive.is
+const archived = await fetchFromArchives('https://example.com/article');
+if (archived.success) {
+  console.log(archived.html); // Archived HTML content
+  console.log(archived.archiveUrl); // e.g. https://web.archive.org/web/2if_/...
+}
+
+// Or fetch from specific archive
+const wayback = await fetchFromWayback('https://example.com/article');
+const archiveIs = await fetchFromArchiveIs('https://example.com/article');
+```
+
 ### Site Configuration
 
 ```typescript
@@ -221,6 +244,39 @@ const config = getSiteConfig('example.com');
 const ua = getSiteUserAgent('example.com');
 const referer = getSiteReferer('example.com');
 ```
+
+#### Custom Site Configs
+
+You can provide custom site configurations via the `LYNXGET_SITES_CONFIG` environment variable. Custom configs are merged with the built-in configs (custom configs take precedence).
+
+```bash
+export LYNXGET_SITES_CONFIG=/path/to/my-sites.json
+```
+
+**Example my-sites.json:**
+
+```json
+{
+  "example.com": {
+    "contentSelector": "article.post-content",
+    "userAgent": "custom-ua",
+    "referer": "https://google.com"
+  },
+  "blog.example.com": {
+    "contentSelector": ".blog-body",
+    "extractStrategy": "readability"
+  }
+}
+```
+
+**Available config options:**
+
+| Field             | Type     | Description                                                             |
+| ----------------- | -------- | ----------------------------------------------------------------------- |
+| `contentSelector` | `string` | CSS selector for main content                                           |
+| `userAgent`       | `string` | Custom User-Agent header                                                |
+| `referer`         | `string` | Custom Referer header                                                   |
+| `extractStrategy` | `string` | Force extraction strategy: `readability`, `unfluff`, `jsonld`, `nextjs` |
 
 ### Content Validation
 
@@ -240,12 +296,19 @@ if (!validation.valid) {
 ```
 Usage: lynxget <url> [options]
 
+Output is markdown by default, preserving article structure (headings, links, lists).
+
 Options:
-  --json      Full JSON output (title, content, antibot detections, etc)
-  --raw       Raw HTML output (no extraction)
-  --detect    Show antibot detection only
-  -q, --quiet Text content only (no metadata)
-  -h, --help  Show this help message
+  --json              Full JSON output (title, content, markdown, antibot detections, etc)
+  --raw               Raw HTML output (no extraction)
+  --detect            Show antibot detection only
+  -q, --quiet         Markdown content only (no metadata)
+  --text              Plain text content only (no metadata, no markdown)
+  --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
+  -h, --help          Show this help message
+
+Environment:
+  LYNXGET_SITES_CONFIG   Path to custom site configs JSON file (merged with built-in configs)
 ```
 
 **Default output:**
@@ -258,7 +321,9 @@ Published: 2025-01-26T12:00:00Z
 Language: en
 Fetched in 523ms
 ---
-[Extracted article text...]
+# Article Heading
+
+Article content with **formatting**, [links](https://example.com), and structure preserved...
 ```
 
 **Detection output** (`--detect`):
