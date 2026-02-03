@@ -35,10 +35,13 @@ All four must pass. Do not create a PR with failing checks.
 
 ## Worktree Workflow
 
+**Never modify files directly on the main branch.** All feature work, bug fixes, and changes must be done in a git worktree. When asked to implement something, always create a worktree first.
+
 After creating a git worktree for feature work, **immediately `cd` to the worktree directory** before running any commands or making changes. This ensures you're working in the correct isolated context, not the main repository.
 
 ```bash
-cd .worktrees/<worktree-name>
+git worktree add .worktrees/<name> -b feature/<name>
+cd .worktrees/<name>
 ```
 
 ## Project Structure
