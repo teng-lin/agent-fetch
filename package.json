@@ -45,6 +45,7 @@
   },
   "files": [
     "dist",
+    "config",
     "LICENSE",
     "README.md"
   ],
