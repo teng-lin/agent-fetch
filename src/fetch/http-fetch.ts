@@ -159,6 +159,43 @@ function htmlToText(html: string): string | null {
 }
 
 /**
+ * Resolve a WP REST API field that may be a plain string (custom endpoints)
+ * or an object with a `rendered` property (standard WP).
+ */
+function resolveWpField(field: unknown): string | undefined {
+  if (typeof field === 'string') return field;
+  if (typeof field === 'object' && field !== null && 'rendered' in field) {
+    const rendered = (field as { rendered: unknown }).rendered;
+    if (typeof rendered === 'string') return rendered;
+  }
+  return undefined;
+}
+
+/**
+ * Extract the first post object from a WP REST API response.
+ *
+ * Handles three response shapes:
+ * - Standard ?slug= query: [{...}]
+ * - Standard /posts/123:   {...}
+ * - Custom envelope:       {posts: [{...}]}
+ */
+function resolveWpPost(raw: unknown): Record<string, unknown> | null {
+  if (Array.isArray(raw)) {
+    const post = raw[0];
+    return typeof post === 'object' && post !== null ? (post as Record<string, unknown>) : null;
+  }
+  if (typeof raw === 'object' && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.posts)) {
+      const post = obj.posts[0];
+      return typeof post === 'object' && post !== null ? (post as Record<string, unknown>) : null;
+    }
+    return obj;
+  }
+  return null;
+}
+
+/**
  * Try fetching article content from WordPress REST API.
  * Appends ?_embed to the URL to get author data in the response.
  * Returns an ExtractionResult if API returns sufficient content, null otherwise.
@@ -176,30 +213,33 @@ async function tryWpRestApiExtraction(
 
     if (!response.success || !response.html) return null;
 
-    const raw = JSON.parse(response.html);
-    // WP REST API returns an array for ?slug= queries, single object for /posts/123
-    const json = Array.isArray(raw) ? raw[0] : raw;
+    const json = resolveWpPost(JSON.parse(response.html));
     if (!json) return null;
-    const contentHtml = json.content?.rendered;
-    if (!contentHtml || typeof contentHtml !== 'string') return null;
+
+    const contentHtml = resolveWpField(json.content);
+    if (!contentHtml) return null;
 
     const textContent = htmlToText(contentHtml) ?? '';
     if (textContent.length < GOOD_CONTENT_LENGTH) return null;
 
-    const title = json.title?.rendered
-      ? (htmlToText(json.title.rendered) ?? null)
-      : (originalResult?.title ?? null);
+    const rawTitle = resolveWpField(json.title);
+    const title = rawTitle ? (htmlToText(rawTitle) ?? null) : (originalResult?.title ?? null);
 
-    const excerpt = json.excerpt?.rendered ? (htmlToText(json.excerpt.rendered) ?? null) : null;
+    const rawExcerpt = resolveWpField(json.excerpt);
+    const excerpt = rawExcerpt ? (htmlToText(rawExcerpt) ?? null) : null;
+
+    const embedded = json._embedded as { author?: { name?: string }[] } | undefined;
+    const byline = embedded?.author?.[0]?.name ?? originalResult?.byline ?? null;
+    const dateGmt = typeof json.date_gmt === 'string' ? json.date_gmt : null;
 
     return {
       title,
-      byline: json._embedded?.author?.[0]?.name ?? originalResult?.byline ?? null,
+      byline,
       content: contentHtml,
       textContent,
       excerpt,
       siteName: originalResult?.siteName ?? null,
-      publishedTime: json.date_gmt ?? originalResult?.publishedTime ?? null,
+      publishedTime: dateGmt ?? originalResult?.publishedTime ?? null,
       lang: originalResult?.lang ?? null,
       method: 'wp-rest-api',
     };

@@ -83,7 +83,7 @@ export interface SiteConfig {
   notes?: string;
   /** Use WordPress REST API for content extraction */
   useWpRestApi?: boolean;
-  /** Custom WP JSON API path (e.g. '/wp-json/techinasia/2.0/posts/') */
+  /** Custom WP JSON API path for sites with non-standard endpoints */
   wpJsonApiPath?: string;
 }
 

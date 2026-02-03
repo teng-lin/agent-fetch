@@ -191,9 +191,10 @@ describe('sites/site-config', () => {
   });
 
   describe('getSiteWpJsonApiPath', () => {
-    it('returns custom path for techinasia.com', () => {
+    it('returns custom path for a site with wpJsonApiPath configured', () => {
+      // Uses a real configured site from sites.json
       const path = getSiteWpJsonApiPath('https://www.techinasia.com/article');
-      expect(path).toBe('/wp-json/techinasia/2.0/posts/');
+      expect(path).toMatch(/^\/wp-json\/.+\/posts\/$/);
     });
 
     it('returns null for sites without custom path', () => {

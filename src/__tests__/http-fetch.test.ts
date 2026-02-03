@@ -1171,7 +1171,7 @@ describe('WP REST API fallback', () => {
   });
 
   it('uses config wpJsonApiPath when HTML auto-detection fails', async () => {
-    const url = 'https://www.techinasia.com/my-article-slug';
+    const url = 'https://www.example-wp-site.com/my-article-slug';
 
     // Page HTML has no WP link tag
     vi.mocked(httpRequest).mockResolvedValueOnce({
@@ -1201,18 +1201,22 @@ describe('WP REST API fallback', () => {
     vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
 
     // Config returns custom API path
-    vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce('/wp-json/techinasia/2.0/posts/');
+    vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce('/wp-json/custom/2.0/posts/');
 
-    // WP API returns full content
+    // WP API returns full content in custom envelope: {posts: [{content: "..."}]}
     vi.mocked(httpRequest).mockResolvedValueOnce({
       success: true,
       statusCode: 200,
       html: JSON.stringify({
-        title: { rendered: 'Full TechInAsia Article' },
-        content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
-        excerpt: { rendered: '<p>Excerpt</p>' },
-        date_gmt: '2024-06-01T08:00:00',
-        _embedded: { author: [{ name: 'TIA Author' }] },
+        total: 1,
+        per_page: 30,
+        posts: [
+          {
+            title: 'Full Article via Custom WP Endpoint',
+            content: '<p>' + 'Full article content. '.repeat(50) + '</p>',
+            date_gmt: '2024-06-01T08:00:00',
+          },
+        ],
       }),
       headers: { 'content-type': 'application/json' },
       cookies: [],
@@ -1221,11 +1225,11 @@ describe('WP REST API fallback', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(true);
-    expect(result.title).toBe('Full TechInAsia Article');
+    expect(result.title).toBe('Full Article via Custom WP Endpoint');
     expect(result.extractionMethod).toBe('wp-rest-api');
     // Verify the constructed API URL uses the config path + slug
     const apiCall = vi.mocked(httpRequest).mock.calls[1][0];
-    expect(apiCall).toContain('/wp-json/techinasia/2.0/posts/my-article-slug');
+    expect(apiCall).toContain('/wp-json/custom/2.0/posts/my-article-slug');
   });
 
   it('uses config useWpRestApi to construct standard WP API URL', async () => {
