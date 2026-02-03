@@ -9,6 +9,9 @@ import path from 'path';
 
 const DB_PATH = path.join(process.cwd(), 'lynxget-e2e.db');
 
+/** Path to bundled sites.json config */
+const BUNDLED_SITES_PATH = path.join(process.cwd(), 'config', 'sites.json');
+
 let db: SqlJsDatabase | null = null;
 let currentRunId: string | null = null;
 
@@ -20,6 +23,33 @@ function getGitCommit(): string {
     return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
   } catch {
     return 'unknown';
+  }
+}
+
+/**
+ * Load the merged sites config JSON as a string.
+ * Combines bundled config/sites.json with user config from LYNXGET_SITES_CONFIG.
+ */
+function getSitesConfigJson(): string | null {
+  try {
+    // Load bundled config
+    let bundled: Record<string, unknown> = {};
+    if (fs.existsSync(BUNDLED_SITES_PATH)) {
+      bundled = JSON.parse(fs.readFileSync(BUNDLED_SITES_PATH, 'utf-8'));
+    }
+
+    // Load user config if specified
+    let user: Record<string, unknown> = {};
+    const userConfigPath = process.env.LYNXGET_SITES_CONFIG;
+    if (userConfigPath && fs.existsSync(userConfigPath)) {
+      user = JSON.parse(fs.readFileSync(userConfigPath, 'utf-8'));
+    }
+
+    // Merge (user overrides bundled)
+    const merged = { ...bundled, ...user };
+    return JSON.stringify(merged);
+  } catch {
+    return null;
   }
 }
 
@@ -79,6 +109,7 @@ export async function initializeDatabase(): Promise<void> {
         os TEXT,
         network TEXT,
         preset TEXT,
+        sites TEXT,
         started_at DATETIME NOT NULL,
         ended_at DATETIME,
         total_tests INTEGER,
@@ -139,7 +170,7 @@ export async function initializeDatabase(): Promise<void> {
     // Migrate existing test_runs: add columns if they don't exist
     const columnsResult = db.exec('PRAGMA table_info(test_runs)');
     const existingColumns = new Set(columnsResult[0]?.values.map((row) => row[1] as string) ?? []);
-    for (const col of ['os', 'network', 'preset']) {
+    for (const col of ['os', 'network', 'preset', 'sites']) {
       if (!existingColumns.has(col)) {
         db.run(`ALTER TABLE test_runs ADD COLUMN ${col} TEXT`);
       }
@@ -183,6 +214,7 @@ export function startTestRun(runTypeOrOptions: string | TestRunOptions = 'fetch'
   const detectedOs = `${os.platform()}/${os.release()}`;
   const network = process.env.LYNXGET_NETWORK || null;
   const preset = opts.preset ?? process.env.LYNXGET_PRESET ?? null;
+  const sites = getSitesConfigJson();
 
   const runId = generateRunId();
   const gitCommit = getGitCommit();
@@ -190,10 +222,10 @@ export function startTestRun(runTypeOrOptions: string | TestRunOptions = 'fetch'
 
   db.run(
     `
-    INSERT INTO test_runs (run_id, git_commit, run_type, os, network, preset, started_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO test_runs (run_id, git_commit, run_type, os, network, preset, sites, started_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `,
-    [runId, gitCommit, runType, detectedOs, network, preset, startedAt]
+    [runId, gitCommit, runType, detectedOs, network, preset, sites, startedAt]
   );
 
   currentRunId = runId;

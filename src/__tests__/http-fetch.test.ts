@@ -1186,20 +1186,7 @@ describe('WP REST API primary extraction', () => {
 
     vi.mocked(quickValidate).mockReturnValue({ valid: true });
 
-    // extractFromHtml returns short content (< 100 words, > 100 chars)
-    vi.mocked(extractFromHtml).mockReturnValueOnce({
-      title: 'Paywalled Article',
-      byline: null,
-      content: '<p>Subscribe to read more.</p>',
-      textContent: 'Subscribe to read more about this interesting topic here. '.repeat(3),
-      excerpt: null,
-      siteName: null,
-      publishedTime: null,
-      lang: null,
-      method: 'readability',
-    });
-
-    // HTML detection returns null
+    // HTML detection returns null (no WP link tag in HTML)
     vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
 
     // Config returns custom API path
@@ -1234,47 +1221,23 @@ describe('WP REST API primary extraction', () => {
     expect(apiCall).toContain('/wp-json/custom/2.0/posts/my-article-slug');
   });
 
-  it('uses config useWpRestApi to construct standard WP API URL', async () => {
-    const url = 'https://www.crikey.com.au/2025/08/15/ai-regulation/';
+  it('uses config useWpRestApi to skip HTML and go direct to WP API', async () => {
+    const url = 'https://example-wp-site.com/2025/08/15/test-article/';
 
-    vi.mocked(httpRequest).mockResolvedValueOnce({
-      success: true,
-      statusCode: 200,
-      html: '<html><body>Short paywall content</body></html>',
-      headers: { 'content-type': 'text/html' },
-      cookies: [],
-    });
-
-    vi.mocked(quickValidate).mockReturnValue({ valid: true });
-
-    vi.mocked(extractFromHtml).mockReturnValueOnce({
-      title: 'Paywalled',
-      byline: null,
-      content: '<p>Subscribe.</p>',
-      textContent: 'Subscribe to read this article about AI regulation today. '.repeat(3),
-      excerpt: null,
-      siteName: null,
-      publishedTime: null,
-      lang: null,
-      method: 'readability',
-    });
-
-    // HTML detection returns null, no custom path
-    vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
-    vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce(null);
+    // Config enables WP REST API fast path (skips HTML fetch entirely)
     vi.mocked(siteUseWpRestApi).mockReturnValueOnce(true);
 
-    // WP API returns full content (array for ?slug= queries)
+    // WP API returns full content directly (first and only httpRequest call)
     vi.mocked(httpRequest).mockResolvedValueOnce({
       success: true,
       statusCode: 200,
       html: JSON.stringify([
         {
-          title: { rendered: 'Full Crikey Article' },
+          title: { rendered: 'Full WP Article' },
           content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
           excerpt: { rendered: '<p>Excerpt</p>' },
           date_gmt: '2025-08-15T10:00:00',
-          _embedded: { author: [{ name: 'Crikey Author' }] },
+          _embedded: { author: [{ name: 'Test Author' }] },
         },
       ]),
       headers: { 'content-type': 'application/json' },
@@ -1284,10 +1247,10 @@ describe('WP REST API primary extraction', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(true);
-    expect(result.title).toBe('Full Crikey Article');
+    expect(result.title).toBe('Full WP Article');
     expect(result.extractionMethod).toBe('wp-rest-api');
     // Verify the constructed API URL uses standard WP path + slug
-    const apiCall = vi.mocked(httpRequest).mock.calls[1][0];
-    expect(apiCall).toContain('/wp-json/wp/v2/posts?slug=ai-regulation');
+    const apiCall = vi.mocked(httpRequest).mock.calls[0][0];
+    expect(apiCall).toContain('/wp-json/wp/v2/posts?slug=test-article');
   });
 });
