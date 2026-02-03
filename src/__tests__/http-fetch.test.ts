@@ -14,6 +14,7 @@ vi.mock('../fetch/content-validator.js', () => ({
 vi.mock('../extract/content-extractors.js', () => ({
   extractFromHtml: vi.fn(),
   detectWpRestApi: vi.fn().mockReturnValue(null),
+  tryNextDataExtraction: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../sites/site-config.js', () => ({
@@ -21,6 +22,7 @@ vi.mock('../sites/site-config.js', () => ({
   getSiteReferer: vi.fn(),
   siteUseWpRestApi: vi.fn().mockReturnValue(false),
   getSiteWpJsonApiPath: vi.fn().mockReturnValue(null),
+  siteUseNextData: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock('../fetch/archive-fallback.js', () => ({

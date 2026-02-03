@@ -4,7 +4,11 @@
 import httpcloak from 'httpcloak';
 import { httpRequest, type HttpResponse } from './http-client.js';
 import { quickValidate } from './content-validator.js';
-import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
+import {
+  extractFromHtml,
+  detectWpRestApi,
+  tryNextDataExtraction,
+} from '../extract/content-extractors.js';
 import { fetchFromArchives } from './archive-fallback.js';
 import { detectFromResponse, detectFromHtml, mergeDetections } from '../antibot/detector.js';
 import {
@@ -12,6 +16,7 @@ import {
   getSiteReferer,
   siteUseWpRestApi,
   getSiteWpJsonApiPath,
+  siteUseNextData,
 } from '../sites/site-config.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
@@ -326,6 +331,39 @@ async function tryWpRestApiFallback(
 }
 
 /**
+ * Try Next.js __NEXT_DATA__ extraction for sites configured with useNextData.
+ * Called proactively on validation failures before archive fallback.
+ * Returns a success FetchResult if extraction finds sufficient content, null otherwise.
+ */
+function tryNextDataFallback(
+  html: string,
+  url: string,
+  startTime: number,
+  response: { statusCode: number; html?: string },
+  antibot: AntibotDetection[] | undefined
+): FetchResult | null {
+  if (!siteUseNextData(url)) return null;
+
+  try {
+    const { document } = parseHTML(html);
+    const result = tryNextDataExtraction(document, url);
+    if (!result || !result.textContent || result.textContent.length < MIN_CONTENT_LENGTH)
+      return null;
+
+    logger.info({ url, method: 'next-data' }, 'Recovered content from Next.js data');
+    return successResult(url, startTime, result, {
+      antibot,
+      statusCode: response.statusCode,
+      rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
+      extractionMethod: 'next-data',
+    });
+  } catch (e) {
+    logger.debug({ url, error: String(e) }, 'Next.js data fallback failed');
+    return null;
+  }
+}
+
+/**
  * Build site-specific request headers (User-Agent, Referer) for a URL.
  */
 function buildSiteHeaders(url: string): Record<string, string> {
@@ -485,8 +523,17 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         }
       }
 
-      // Try WP REST API before archive for validation failures
+      // Try Next.js data extraction before WP REST API and archive for validation failures
       if (ARCHIVE_FALLBACK_ERRORS.has(validation.error!)) {
+        const nextDataFallback = tryNextDataFallback(
+          response.html,
+          url,
+          startTime,
+          response,
+          antibotField
+        );
+        if (nextDataFallback) return nextDataFallback;
+
         const wpFallback = await tryWpRestApiFallback(
           response.html,
           url,
