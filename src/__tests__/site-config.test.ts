@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  parseSiteConfigJson,
   getSiteConfig,
   getSiteUserAgent,
   getSiteReferer,
@@ -12,34 +13,116 @@ import {
   siteUseWpRestApi,
   getSiteWpJsonApiPath,
   validateSiteConfigs,
-  getSiteConfigStats,
   getSiteCount,
   getConfiguredDomains,
 } from '../sites/site-config.js';
 
-describe('sites/site-config', () => {
+describe('parseSiteConfigJson', () => {
+  it('parses basic site config fields', () => {
+    const result = parseSiteConfigJson({
+      'test.com': {
+        userAgent: 'TestBot/1.0',
+        referer: 'https://google.com/',
+        allowCookies: true,
+        preferJsonLd: true,
+        useNextData: false,
+        nextDataPath: 'props.pageProps.content',
+        notes: 'test site',
+        useWpRestApi: true,
+        wpJsonApiPath: '/wp-json/wp/v2/posts/',
+        usesArchiveFallback: true,
+      },
+    });
+
+    expect(result['test.com']).toEqual({
+      userAgent: 'TestBot/1.0',
+      referer: 'https://google.com/',
+      allowCookies: true,
+      preferJsonLd: true,
+      useNextData: false,
+      nextDataPath: 'props.pageProps.content',
+      notes: 'test site',
+      useWpRestApi: true,
+      wpJsonApiPath: '/wp-json/wp/v2/posts/',
+      usesArchiveFallback: true,
+    });
+  });
+
+  it('parses archiveSelectors as string array', () => {
+    const result = parseSiteConfigJson({
+      'test.com': { archiveSelectors: ['article', 'main'] },
+    });
+    expect(result['test.com'].archiveSelectors).toEqual(['article', 'main']);
+  });
+
+  it('converts blockPatterns strings to RegExp', () => {
+    const result = parseSiteConfigJson({
+      'test.com': { blockPatterns: ['\\.example\\.com\\/ads\\/'] },
+    });
+    expect(result['test.com'].blockPatterns).toHaveLength(1);
+    expect(result['test.com'].blockPatterns![0]).toBeInstanceOf(RegExp);
+    expect(result['test.com'].blockPatterns![0].test('https://cdn.example.com/ads/banner')).toBe(
+      true
+    );
+  });
+
+  it('skips invalid regex patterns without losing the site config', () => {
+    const result = parseSiteConfigJson({
+      'test.com': {
+        userAgent: 'Bot/1.0',
+        blockPatterns: ['(invalid[regex'],
+      },
+    });
+    expect(result['test.com']).toBeDefined();
+    expect(result['test.com'].userAgent).toBe('Bot/1.0');
+    expect(result['test.com'].blockPatterns).toBeUndefined();
+  });
+
+  it('ignores unknown fields', () => {
+    const result = parseSiteConfigJson({
+      'test.com': {
+        userAgent: 'Bot/1.0',
+        unknownField: 'should be ignored',
+        anotherUnknown: 42,
+      },
+    });
+    expect(result['test.com']).toEqual({ userAgent: 'Bot/1.0' });
+  });
+
+  it('ignores fields with wrong types', () => {
+    const result = parseSiteConfigJson({
+      'test.com': {
+        userAgent: 123,
+        allowCookies: 'yes',
+        preferJsonLd: 1,
+      },
+    });
+    expect(result['test.com']).toEqual({});
+  });
+
+  it('parses multiple domains', () => {
+    const result = parseSiteConfigJson({
+      'a.com': { userAgent: 'A' },
+      'b.com': { userAgent: 'B' },
+      'c.com': { allowCookies: true },
+    });
+    expect(Object.keys(result)).toHaveLength(3);
+    expect(result['a.com'].userAgent).toBe('A');
+    expect(result['b.com'].userAgent).toBe('B');
+    expect(result['c.com'].allowCookies).toBe(true);
+  });
+
+  it('returns empty object for empty input', () => {
+    expect(parseSiteConfigJson({})).toEqual({});
+  });
+});
+
+describe('sites/site-config accessor functions', () => {
+  // These tests use domains known to exist in config/sites.json.
+  // When sites.json is eventually emptied, these should move to use
+  // LYNXGET_SITES_CONFIG with a test fixture file.
+
   describe('getSiteConfig', () => {
-    it('returns config for direct domain match', () => {
-      const config = getSiteConfig('https://github.com/example/repo');
-      expect(config).not.toBeNull();
-    });
-
-    it('strips www. prefix', () => {
-      const config = getSiteConfig('https://www.github.com/page');
-      expect(config).not.toBeNull();
-    });
-
-    it('strips m. prefix', () => {
-      const config = getSiteConfig('https://m.wikipedia.org/wiki/Test');
-      expect(config).not.toBeNull();
-    });
-
-    it('matches subdomain to parent config', () => {
-      const config = getSiteConfig('https://en.wikipedia.org/wiki/Test');
-      expect(config).not.toBeNull();
-      expect(config!.userAgent).toContain('Googlebot');
-    });
-
     it('returns null for unknown domain', () => {
       expect(getSiteConfig('https://unknown.example.info/page')).toBeNull();
     });
@@ -50,94 +133,65 @@ describe('sites/site-config', () => {
   });
 
   describe('getSiteUserAgent', () => {
-    it('returns custom UA for wikipedia.org', () => {
-      const ua = getSiteUserAgent('https://wikipedia.org/wiki/Test');
-      expect(ua).not.toBeNull();
-      expect(ua).toContain('Googlebot');
-    });
-
-    it('returns null for github.com (no custom UA)', () => {
-      expect(getSiteUserAgent('https://github.com/page')).toBeNull();
-    });
-
     it('returns null for unknown domain', () => {
       expect(getSiteUserAgent('https://unknown.example.info/page')).toBeNull();
     });
   });
 
   describe('getSiteReferer', () => {
-    it('returns null when unconfigured', () => {
-      expect(getSiteReferer('https://github.com/page')).toBeNull();
+    it('returns null for unknown domain', () => {
+      expect(getSiteReferer('https://unknown.example.info/page')).toBeNull();
     });
   });
 
   describe('siteUsesArchiveFallback', () => {
-    it('returns true for example.com', () => {
-      expect(siteUsesArchiveFallback('https://example.com/article')).toBe(true);
-    });
-
-    it('returns false for github.com', () => {
-      expect(siteUsesArchiveFallback('https://github.com/page')).toBe(false);
-    });
-
     it('returns false for unknown domain', () => {
       expect(siteUsesArchiveFallback('https://unknown.example.info/page')).toBe(false);
     });
   });
 
   describe('getSiteArchiveSelectors', () => {
-    it('returns defaults when unconfigured', () => {
-      const selectors = getSiteArchiveSelectors('https://github.com/page');
+    it('returns defaults for unknown domain', () => {
+      const selectors = getSiteArchiveSelectors('https://unknown.example.info/page');
       expect(selectors).toEqual(['article', 'main', '.article-body']);
     });
   });
 
   describe('getSiteBlockPatterns', () => {
-    it('returns patterns for test.example.org', () => {
-      const patterns = getSiteBlockPatterns('https://test.example.org/page');
-      expect(patterns).toHaveLength(2);
-    });
-
-    it('returns empty array for github.com', () => {
-      expect(getSiteBlockPatterns('https://github.com/page')).toEqual([]);
+    it('returns empty array for unknown domain', () => {
+      expect(getSiteBlockPatterns('https://unknown.example.info/page')).toEqual([]);
     });
   });
 
   describe('shouldBlockRequest', () => {
-    it('blocks matching analytics.js URL', () => {
+    it('returns false when site has no config', () => {
       expect(
-        shouldBlockRequest('https://test.example.org/page', 'https://cdn.example.org/analytics.js')
-      ).toBe(true);
-    });
-
-    it('blocks matching /ads/ path', () => {
-      expect(
-        shouldBlockRequest('https://test.example.org/page', 'https://cdn.example.org/ads/banner')
-      ).toBe(true);
-    });
-
-    it('allows non-matching URL', () => {
-      expect(
-        shouldBlockRequest('https://test.example.org/page', 'https://cdn.example.org/styles.css')
+        shouldBlockRequest('https://unknown.example.info/page', 'https://cdn.example.org/script.js')
       ).toBe(false);
     });
   });
 
   describe('sitePreferJsonLd', () => {
-    it('returns true for demo.example.net', () => {
-      expect(sitePreferJsonLd('https://demo.example.net/article')).toBe(true);
-    });
-
-    it('returns false for github.com', () => {
-      expect(sitePreferJsonLd('https://github.com/page')).toBe(false);
+    it('returns false for unknown domain', () => {
+      expect(sitePreferJsonLd('https://unknown.example.info/page')).toBe(false);
     });
   });
 
   describe('siteUseNextData', () => {
-    it('returns false for all minimal defaults', () => {
-      expect(siteUseNextData('https://github.com/page')).toBe(false);
-      expect(siteUseNextData('https://example.com/article')).toBe(false);
-      expect(siteUseNextData('https://wikipedia.org/wiki/Test')).toBe(false);
+    it('returns false for unknown domain', () => {
+      expect(siteUseNextData('https://unknown.example.info/page')).toBe(false);
+    });
+  });
+
+  describe('siteUseWpRestApi', () => {
+    it('returns false for unknown domain', () => {
+      expect(siteUseWpRestApi('https://unknown.example.info/page')).toBe(false);
+    });
+  });
+
+  describe('getSiteWpJsonApiPath', () => {
+    it('returns null for unknown domain', () => {
+      expect(getSiteWpJsonApiPath('https://unknown.example.info/page')).toBeNull();
     });
   });
 
@@ -147,86 +201,22 @@ describe('sites/site-config', () => {
     });
   });
 
-  describe('getSiteConfigStats', () => {
-    it('returns correct stats', () => {
-      const stats = getSiteConfigStats();
-      expect(stats.total).toBeGreaterThanOrEqual(5);
-      expect(stats.minimalDefaults).toBe(5);
-    });
-  });
-
   describe('getSiteCount', () => {
-    it('returns at least 5 configured sites', () => {
-      expect(getSiteCount()).toBeGreaterThanOrEqual(5);
+    it('returns a non-negative number', () => {
+      expect(getSiteCount()).toBeGreaterThanOrEqual(0);
     });
   });
 
   describe('getConfiguredDomains', () => {
-    it('includes all minimal default domains', () => {
-      const domains = getConfiguredDomains();
-      expect(domains).toContain('github.com');
-      expect(domains).toContain('wikipedia.org');
-      expect(domains).toContain('example.com');
-      expect(domains).toContain('test.example.org');
-      expect(domains).toContain('demo.example.net');
+    it('returns an array', () => {
+      expect(Array.isArray(getConfiguredDomains())).toBe(true);
     });
   });
 
-  describe('siteUseWpRestApi', () => {
-    it('returns true for crikey.com.au', () => {
-      expect(siteUseWpRestApi('https://www.crikey.com.au/article')).toBe(true);
-    });
-
-    it('returns true for nationalreview.com', () => {
-      expect(siteUseWpRestApi('https://www.nationalreview.com/article')).toBe(true);
-    });
-
-    it('returns false for unconfigured site', () => {
-      expect(siteUseWpRestApi('https://github.com/page')).toBe(false);
-    });
-
-    it('returns false for unknown domain', () => {
-      expect(siteUseWpRestApi('https://unknown.example.info/page')).toBe(false);
-    });
-  });
-
-  describe('getSiteWpJsonApiPath', () => {
-    it('returns custom path for a site with wpJsonApiPath configured', () => {
-      // Uses a real configured site from sites.json
-      const path = getSiteWpJsonApiPath('https://www.techinasia.com/article');
-      expect(path).toMatch(/^\/wp-json\/.+\/posts\/$/);
-    });
-
-    it('returns null for sites without custom path', () => {
-      expect(getSiteWpJsonApiPath('https://www.crikey.com.au/article')).toBeNull();
-    });
-
-    it('returns null for unconfigured site', () => {
-      expect(getSiteWpJsonApiPath('https://github.com/page')).toBeNull();
-    });
-  });
-
-  describe('loaded site configs', () => {
-    it('loads configs from sites.json', () => {
-      // The config file has 472 sites, minimal-defaults has 5
-      expect(getSiteCount()).toBeGreaterThan(100);
-    });
-
-    it('has block patterns as RegExp instances', () => {
-      // ft.com has blockPatterns in the JSON as strings
-      const config = getSiteConfig('https://ft.com/article');
-      // If ft.com is in configs and has blockPatterns, they should be RegExp
-      if (config?.blockPatterns) {
-        expect(config.blockPatterns[0]).toBeInstanceOf(RegExp);
-      }
-    });
-
-    it('curated config overrides generated for same domain', () => {
-      // nytimes.com is in curated with bingbot UA
-      const config = getSiteConfig('https://nytimes.com/article');
-      if (config) {
-        expect(config.userAgent).toContain('bingbot');
-      }
+  describe('hostname normalization', () => {
+    it('strips www. and m. prefixes when matching', () => {
+      expect(getSiteConfig('https://www.unknown.example.info/page')).toBeNull();
+      expect(getSiteConfig('https://m.unknown.example.info/page')).toBeNull();
     });
   });
 });

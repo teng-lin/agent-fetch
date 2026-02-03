@@ -1,62 +1,18 @@
 /**
  * Site-specific configurations for article extraction
  *
- * Minimal defaults are included as examples.
- * For production use, load site-specific configs via the plugin system.
- * See docs/PLUGIN-SYSTEM.md for how to add your own site configurations.
+ * Configs are loaded from config/sites.json (bundled) and optionally from a
+ * user-provided JSON file via the LYNXGET_SITES_CONFIG environment variable.
+ * User configs take highest priority (last-write-wins).
  */
-import { z } from 'zod';
-import { MINIMAL_DEFAULTS } from './minimal-defaults.js';
-import { USER_AGENTS, REFERERS, BLOCK_PATTERNS, convertBlockPatterns } from './constants.js';
 import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
+import { USER_AGENTS, REFERERS, BLOCK_PATTERNS, convertBlockPatterns } from './constants.js';
 
 // Re-export constants for backward compatibility
 export { USER_AGENTS, REFERERS, BLOCK_PATTERNS };
-
-function loadJsonSiteConfigs(): Record<string, SiteConfig> {
-  try {
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const configPath = join(__dirname, '..', '..', 'config', 'sites.json');
-    const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
-    const configs: Record<string, SiteConfig> = {};
-
-    for (const [domain, rawConfig] of Object.entries(raw)) {
-      const cfg = rawConfig as Record<string, unknown>;
-      const config: SiteConfig = {};
-
-      if (typeof cfg.userAgent === 'string') config.userAgent = cfg.userAgent;
-      if (typeof cfg.referer === 'string') config.referer = cfg.referer;
-      if (typeof cfg.allowCookies === 'boolean') config.allowCookies = cfg.allowCookies;
-      if (typeof cfg.usesArchiveFallback === 'boolean')
-        config.usesArchiveFallback = cfg.usesArchiveFallback;
-      if (typeof cfg.preferJsonLd === 'boolean') config.preferJsonLd = cfg.preferJsonLd;
-      if (typeof cfg.useNextData === 'boolean') config.useNextData = cfg.useNextData;
-      if (typeof cfg.nextDataPath === 'string') config.nextDataPath = cfg.nextDataPath;
-      if (typeof cfg.notes === 'string') config.notes = cfg.notes;
-      if (typeof cfg.useWpRestApi === 'boolean') config.useWpRestApi = cfg.useWpRestApi;
-      if (typeof cfg.wpJsonApiPath === 'string') config.wpJsonApiPath = cfg.wpJsonApiPath;
-      if (Array.isArray(cfg.archiveSelectors)) {
-        config.archiveSelectors = cfg.archiveSelectors.map(String);
-      }
-      if (Array.isArray(cfg.blockPatterns)) {
-        try {
-          config.blockPatterns = convertBlockPatterns(cfg.blockPatterns);
-        } catch {
-          // Skip invalid regex patterns for this site rather than losing all configs
-        }
-      }
-
-      configs[domain] = config;
-    }
-
-    return configs;
-  } catch {
-    // Config file missing or invalid -- continue with minimal defaults
-    return {};
-  }
-}
 
 // --- Site config interface ---
 
@@ -104,12 +60,86 @@ export const SiteConfigSchema = z.object({
   wpJsonApiPath: z.string().optional(),
 });
 
+// --- JSON parsing ---
+
+/**
+ * Parse a raw JSON object into validated SiteConfig records.
+ *
+ * Each field is individually type-checked so that unknown or mistyped fields
+ * are silently dropped rather than causing the whole config to fail.
+ */
+export function parseSiteConfigJson(raw: Record<string, unknown>): Record<string, SiteConfig> {
+  const configs: Record<string, SiteConfig> = {};
+
+  for (const [domain, rawConfig] of Object.entries(raw)) {
+    const cfg = rawConfig as Record<string, unknown>;
+    const config: SiteConfig = {};
+
+    if (typeof cfg.userAgent === 'string') config.userAgent = cfg.userAgent;
+    if (typeof cfg.referer === 'string') config.referer = cfg.referer;
+    if (typeof cfg.allowCookies === 'boolean') config.allowCookies = cfg.allowCookies;
+    if (typeof cfg.usesArchiveFallback === 'boolean')
+      config.usesArchiveFallback = cfg.usesArchiveFallback;
+    if (typeof cfg.preferJsonLd === 'boolean') config.preferJsonLd = cfg.preferJsonLd;
+    if (typeof cfg.useNextData === 'boolean') config.useNextData = cfg.useNextData;
+    if (typeof cfg.nextDataPath === 'string') config.nextDataPath = cfg.nextDataPath;
+    if (typeof cfg.notes === 'string') config.notes = cfg.notes;
+    if (typeof cfg.useWpRestApi === 'boolean') config.useWpRestApi = cfg.useWpRestApi;
+    if (typeof cfg.wpJsonApiPath === 'string') config.wpJsonApiPath = cfg.wpJsonApiPath;
+    if (Array.isArray(cfg.archiveSelectors)) {
+      config.archiveSelectors = cfg.archiveSelectors.map(String);
+    }
+    if (Array.isArray(cfg.blockPatterns)) {
+      try {
+        config.blockPatterns = convertBlockPatterns(cfg.blockPatterns);
+      } catch {
+        // Skip invalid regex patterns for this site rather than losing all configs
+      }
+    }
+
+    configs[domain] = config;
+  }
+
+  return configs;
+}
+
+function loadJsonSiteConfigs(): Record<string, SiteConfig> {
+  try {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const configPath = join(__dirname, '..', '..', 'config', 'sites.json');
+    const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return parseSiteConfigJson(raw);
+  } catch {
+    // Config file missing or invalid -- continue without bundled configs
+    return {};
+  }
+}
+
+/**
+ * Load user site configs from LYNXGET_SITES_CONFIG environment variable.
+ * The env var should point to an absolute path to a JSON file with the same
+ * format as config/sites.json. User configs take highest priority.
+ */
+function loadUserSiteConfigs(): Record<string, SiteConfig> {
+  const configPath = process.env.LYNXGET_SITES_CONFIG;
+  if (!configPath) return {};
+
+  try {
+    const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return parseSiteConfigJson(raw);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Warning: failed to load LYNXGET_SITES_CONFIG from ${configPath}: ${msg}`);
+    return {};
+  }
+}
+
 // --- Module-level variable ---
 
-// JSON configs loaded first, then minimal defaults override (development examples take priority)
+// Merge order (last wins): built-in sites.json → user config (LYNXGET_SITES_CONFIG)
 const SITE_CONFIGS: Record<string, SiteConfig> = {
   ...loadJsonSiteConfigs(),
-  ...MINIMAL_DEFAULTS,
+  ...loadUserSiteConfigs(),
 };
 
 // --- Validation ---
@@ -130,19 +160,6 @@ export function validateSiteConfigs(): void {
   if (errors.length > 0) {
     throw new Error(`Invalid site configs:\n${errors.join('\n')}`);
   }
-}
-
-/**
- * Get site config statistics
- */
-export function getSiteConfigStats(): {
-  total: number;
-  minimalDefaults: number;
-} {
-  return {
-    total: Object.keys(SITE_CONFIGS).length,
-    minimalDefaults: Object.keys(MINIMAL_DEFAULTS).length,
-  };
 }
 
 // --- Accessor functions ---
