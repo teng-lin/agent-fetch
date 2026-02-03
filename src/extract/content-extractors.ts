@@ -515,11 +515,88 @@ function extractTextFromContentBlocks(blocks: ContentBlock[]): string {
 }
 
 /**
+ * Common paths where Next.js sites store article content as arrays of content blocks.
+ * These are probed in order when no site-specific config exists.
+ */
+const NEXT_DATA_CONTENT_PATHS = [
+  'props.pageProps.content.body',
+  'props.pageProps.article.body',
+  'props.pageProps.article.content',
+  'props.pageProps.post.body',
+  'props.pageProps.post.content',
+];
+
+/**
+ * Check if a value looks like an array of content blocks (has objects with type/text fields).
+ */
+function isContentBlockArray(value: unknown): value is ContentBlock[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  // Check first few items for content block structure
+  const sample = value.slice(0, 5);
+  return sample.some(
+    (item) =>
+      item && typeof item === 'object' && ('type' in item || 'text' in item || 'textHtml' in item)
+  );
+}
+
+/**
+ * Try to extract metadata for content block arrays from various pageProps locations.
+ */
+function extractContentBlockMetadata(
+  pageProps: Record<string, unknown>,
+  document: Document
+): {
+  title: string | null;
+  byline: string | null;
+  excerpt: string | null;
+  publishedTime: string | null;
+} {
+  // Try content.headline, article.headline, post.title, etc.
+  const content = pageProps.content as Record<string, unknown> | undefined;
+  const article = pageProps.article as Record<string, unknown> | undefined;
+  const post = pageProps.post as Record<string, unknown> | undefined;
+
+  const title =
+    (content?.headline as string) ??
+    (article?.headline as string) ??
+    (article?.title as string) ??
+    (post?.title as string) ??
+    (pageProps.title as string) ??
+    extractTitle(document);
+
+  const byline =
+    extractBylineFromAuthors(content?.authors) ??
+    extractBylineFromAuthors(article?.authors) ??
+    extractBylineFromAuthors(post?.authors) ??
+    (pageProps.author as { name?: string })?.name ??
+    null;
+
+  const excerpt =
+    (content?.description as string) ??
+    (article?.description as string) ??
+    (article?.excerpt as string) ??
+    (post?.excerpt as string) ??
+    (pageProps.description as string) ??
+    null;
+
+  const publishedTime =
+    (content?.datePublished as string) ??
+    (article?.datePublished as string) ??
+    (article?.publishedAt as string) ??
+    (post?.date as string) ??
+    (pageProps.publishedAt as string) ??
+    extractPublishedTime(document);
+
+  return { title, byline, excerpt, publishedTime };
+}
+
+/**
  * Strategy 4: Extract from Next.js __NEXT_DATA__
  * Some sites embed full article content in the page props JSON.
- * Supports two modes:
- * 1. Site-specific: Use nextDataPath config to specify custom JSON path (content can be HTML or text)
- * 2. Default: Look for story.body.content structured blocks
+ * Supports three modes (tried in order):
+ * 1. Site-specific: Use nextDataPath config to specify custom JSON path
+ * 2. Auto-detect: Probe common content paths for content block arrays
+ * 3. Default: Look for story.body.content structured blocks
  */
 export function tryNextDataExtraction(document: Document, url: string): ExtractionResult | null {
   try {
@@ -588,6 +665,31 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
               pageProps.publishedAt ??
               pageProps.changed_formatted ??
               extractPublishedTime(document),
+            lang: document.documentElement.lang || 'en',
+            method: 'next-data',
+          };
+        }
+      }
+    }
+
+    // Auto-detect: Probe common content paths for content block arrays
+    for (const path of NEXT_DATA_CONTENT_PATHS) {
+      const content = getByPath(data, path);
+      if (isContentBlockArray(content)) {
+        const textContent = extractTextFromContentBlocks(
+          content.filter((item): item is ContentBlock => item && typeof item === 'object')
+        );
+        if (textContent.length >= MIN_CONTENT_LENGTH) {
+          logger.debug({ url, path }, 'Next.js auto-detected content path extraction succeeded');
+          const meta = extractContentBlockMetadata(pageProps as Record<string, unknown>, document);
+          return {
+            title: meta.title ?? extractTitle(document),
+            byline: meta.byline,
+            content: textContent,
+            textContent,
+            excerpt: meta.excerpt ?? generateExcerpt(null, textContent),
+            siteName: extractSiteName(document),
+            publishedTime: meta.publishedTime ?? extractPublishedTime(document),
             lang: document.documentElement.lang || 'en',
             method: 'next-data',
           };
