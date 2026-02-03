@@ -4,7 +4,7 @@
 import httpcloak from 'httpcloak';
 import { httpRequest, type HttpResponse } from './http-client.js';
 import { quickValidate } from './content-validator.js';
-import { extractFromHtml } from '../extract/content-extractors.js';
+import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
 import { fetchFromArchives } from './archive-fallback.js';
 import { detectFromResponse, detectFromHtml, mergeDetections } from '../antibot/detector.js';
 import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
@@ -12,6 +12,8 @@ import { logger } from '../logger.js';
 import type { ExtractionResult } from '../extract/types.js';
 import type { FetchResult, ValidationError } from './types.js';
 import type { AntibotDetection } from '../antibot/detector.js';
+import { parseHTML } from 'linkedom';
+import { GOOD_CONTENT_LENGTH } from '../extract/types.js';
 
 // Minimum content length (chars) for successful extraction
 const MIN_CONTENT_LENGTH = 100;
@@ -141,6 +143,65 @@ async function tryArchiveFallback(
     };
   } catch (error) {
     logger.debug({ url, error: String(error) }, 'Archive fallback failed');
+    return null;
+  }
+}
+
+/**
+ * Try fetching article content from WordPress REST API.
+ * Appends ?_embed to the URL to get author data in the response.
+ * Returns an ExtractionResult if API returns sufficient content, null otherwise.
+ */
+async function tryWpRestApiExtraction(
+  apiUrl: string,
+  originalResult: ExtractionResult | null,
+  preset?: string
+): Promise<ExtractionResult | null> {
+  try {
+    // Append ?_embed to get _embedded.author data
+    const embedUrl = apiUrl + (apiUrl.includes('?') ? '&_embed' : '?_embed');
+    logger.info({ apiUrl: embedUrl }, 'Trying WordPress REST API extraction');
+
+    const response = await httpRequest(embedUrl, { Accept: 'application/json' }, preset);
+
+    if (!response.success || !response.html) return null;
+
+    const json = JSON.parse(response.html);
+    const contentHtml = json.content?.rendered;
+    if (!contentHtml || typeof contentHtml !== 'string') return null;
+
+    // Parse the HTML content to get text
+    const { document } = parseHTML(`<div>${contentHtml}</div>`);
+    const textContent = document.querySelector('div')?.textContent?.trim() ?? '';
+
+    if (textContent.length < GOOD_CONTENT_LENGTH) return null;
+
+    // Clean HTML entities from title
+    const rawTitle = json.title?.rendered;
+    const title = rawTitle
+      ? (parseHTML(`<div>${rawTitle}</div>`).document.querySelector('div')?.textContent ?? null)
+      : (originalResult?.title ?? null);
+
+    // Clean excerpt
+    const rawExcerpt = json.excerpt?.rendered;
+    const excerpt = rawExcerpt
+      ? (parseHTML(`<div>${rawExcerpt}</div>`).document.querySelector('div')?.textContent?.trim() ??
+        null)
+      : null;
+
+    return {
+      title,
+      byline: json._embedded?.author?.[0]?.name ?? originalResult?.byline ?? null,
+      content: contentHtml,
+      textContent,
+      excerpt,
+      siteName: originalResult?.siteName ?? null,
+      publishedTime: json.date_gmt ?? originalResult?.publishedTime ?? null,
+      lang: originalResult?.lang ?? null,
+      method: 'wp-rest-api',
+    };
+  } catch (e) {
+    logger.debug({ apiUrl, error: String(e) }, 'WordPress REST API extraction failed');
     return null;
   }
 }
@@ -374,9 +435,25 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       );
     }
 
-    // Try archive if extraction succeeded but content looks like a stub/teaser
+    // Try WP REST API and archive if extraction succeeded but content looks like a stub/teaser
     const wordCount = extracted.textContent!.split(/\s+/).length;
     if (wordCount < MIN_GOOD_WORD_COUNT) {
+      // Try WP REST API first (faster, more reliable than archives)
+      const wpApiUrl = detectWpRestApi(parseHTML(response.html).document);
+      if (wpApiUrl) {
+        const wpResult = await tryWpRestApiExtraction(wpApiUrl, extracted, preset);
+        if (wpResult && (wpResult.textContent?.length ?? 0) >= MIN_CONTENT_LENGTH) {
+          logger.info({ url, apiUrl: wpApiUrl }, 'Recovered content from WP REST API');
+          return successResult(url, startTime, wpResult, {
+            antibot: antibotField,
+            statusCode: response.statusCode,
+            rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+            extractionMethod: 'wp-rest-api',
+          });
+        }
+      }
+
+      // Fall back to archive services
       logger.debug({ url, wordCount }, 'Low word count, trying archive for fuller content');
       const archiveResult = await tryArchiveFallback(url, startTime, antibotField);
       if (archiveResult) return archiveResult;

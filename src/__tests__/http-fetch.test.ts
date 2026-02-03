@@ -13,6 +13,7 @@ vi.mock('../fetch/content-validator.js', () => ({
 
 vi.mock('../extract/content-extractors.js', () => ({
   extractFromHtml: vi.fn(),
+  detectWpRestApi: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../sites/site-config.js', () => ({
@@ -35,7 +36,7 @@ vi.mock('../logger.js', () => ({
 
 import { httpRequest } from '../fetch/http-client.js';
 import { quickValidate } from '../fetch/content-validator.js';
-import { extractFromHtml } from '../extract/content-extractors.js';
+import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
 import { getSiteUserAgent, getSiteReferer } from '../sites/site-config.js';
 import { fetchFromArchives } from '../fetch/archive-fallback.js';
 
@@ -938,5 +939,181 @@ describe('resolvePreset', () => {
       expect(result.title).toBe('Teaser');
       expect(result.archiveUrl).toBeUndefined();
     });
+  });
+});
+
+describe('WP REST API fallback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fetches from WP REST API when detected and content is insufficient', async () => {
+    const url = 'https://example.com/2024/01/article-slug/';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: `<html><head><link rel="alternate" type="application/json" href="${apiUrl}" /></head><body>Teaser only.</body></html>`,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // extractFromHtml returns content >= 100 chars but < 100 words (triggers low word count path)
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Article',
+      byline: null,
+      content: '<p>Teaser only.</p>',
+      textContent: 'Teaser only. Subscribe to read more about this very interesting topic. '.repeat(
+        3
+      ),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    // detectWpRestApi finds the API URL
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    // Second httpRequest to WP API returns JSON
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'Full Article Title' },
+        content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
+        excerpt: { rendered: '<p>Article excerpt</p>' },
+        date_gmt: '2024-01-15T10:00:00',
+        _embedded: { author: [{ name: 'John Doe' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('Full Article Title');
+    expect(result.byline).toBe('John Doe');
+    expect(result.extractionMethod).toBe('wp-rest-api');
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+    // Verify ?_embed was appended to the API URL
+    expect(vi.mocked(httpRequest).mock.calls[1][0]).toContain('?_embed');
+  });
+
+  it('skips WP REST API when not detected', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Good content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Good content word. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips WP REST API when initial extraction has enough content (>= 100 words)', async () => {
+    const url = 'https://example.com/article';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html:
+        '<html><head><link rel="alternate" type="application/json" href="' +
+        apiUrl +
+        '" /></head><body>Full article</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Good content word. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls through to archive when WP API also fails', async () => {
+    const url = 'https://example.com/article';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+
+    vi.mocked(httpRequest)
+      .mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html:
+          '<html><head><link rel="alternate" type="application/json" href="' +
+          apiUrl +
+          '" /></head><body>Teaser</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        statusCode: 403,
+        headers: {},
+        cookies: [],
+        error: 'forbidden',
+      });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Teaser',
+      byline: null,
+      content: null,
+      textContent: 'Short teaser content about an interesting topic that is long enough. '.repeat(
+        3
+      ),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+    vi.mocked(fetchFromArchives).mockResolvedValueOnce({ success: false });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(httpRequest).toHaveBeenCalledTimes(2);
   });
 });
