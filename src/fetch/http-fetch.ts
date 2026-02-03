@@ -434,6 +434,33 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
   const preset = options.preset ?? resolvePreset(getSiteUserAgent(url));
 
   try {
+    // Optimization: Try WP REST API first for configured sites (skip HTML fetch)
+    // This avoids the overhead of fetching HTML when we know the site has WP API
+    if (siteUseWpRestApi(url)) {
+      const slug = extractSlugFromUrl(url);
+      if (slug) {
+        const wpApiUrl = `${new URL(url).origin}/wp-json/wp/v2/posts?slug=${encodeURIComponent(slug)}`;
+
+        logger.info({ url, wpApiUrl }, 'Trying WP REST API (config-driven, skipping HTML)');
+
+        try {
+          const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, preset);
+          if (wpResult) {
+            logger.info({ url, wpApiUrl }, 'Extracted content from WP REST API (fast path)');
+            return successResult(url, startTime, wpResult, {
+              statusCode: 200,
+              rawHtml: null,
+              extractionMethod: 'wp-rest-api',
+            });
+          }
+        } catch (e) {
+          logger.debug({ url, error: String(e) }, 'WP REST API fast path failed');
+        }
+
+        logger.debug({ url }, 'WP REST API fast path returned no content, falling back to HTML fetch');
+      }
+    }
+
     logger.info({ url }, 'HTTP fetch starting');
 
     let response: HttpResponse;
