@@ -101,6 +101,7 @@ export async function initializeDatabase(): Promise<void> {
         content_length INTEGER,
         error_message TEXT,
         antibot_detections TEXT,
+        archive_url TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (run_id) REFERENCES test_runs(run_id)
       );
@@ -126,6 +127,7 @@ export async function initializeDatabase(): Promise<void> {
         content_length INTEGER,
         error_message TEXT,
         antibot_detections TEXT,
+        archive_url TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (run_id) REFERENCES test_runs(run_id)
       );
@@ -142,6 +144,16 @@ export async function initializeDatabase(): Promise<void> {
         db.run(`ALTER TABLE test_runs ADD COLUMN ${col} TEXT`);
       }
     }
+
+    // Migrate existing test_results: add archive_url column if it doesn't exist
+    const resultsColumnsResult = db.exec('PRAGMA table_info(test_results)');
+    const existingResultsColumns = new Set(
+      resultsColumnsResult[0]?.values.map((row) => row[1] as string) ?? []
+    );
+    if (!existingResultsColumns.has('archive_url')) {
+      db.run(`ALTER TABLE test_results ADD COLUMN archive_url TEXT`);
+    }
+
     saveDatabaseToDisk();
   }
 }
@@ -222,6 +234,7 @@ export interface TestResult {
   contentLength?: number;
   errorMessage?: string;
   antibotDetections?: string[];
+  archiveUrl?: string;
 }
 
 export function recordTestResult(result: TestResult): void {
@@ -233,8 +246,8 @@ export function recordTestResult(result: TestResult): void {
     `
     INSERT INTO test_results (
       run_id, test_name, url, status, http_status, fetch_duration_ms,
-      extract_strategy, content_length, error_message, antibot_detections
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      extract_strategy, content_length, error_message, antibot_detections, archive_url
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       currentRunId,
@@ -247,6 +260,7 @@ export function recordTestResult(result: TestResult): void {
       result.contentLength ?? null,
       result.errorMessage ?? null,
       result.antibotDetections ? JSON.stringify(result.antibotDetections) : null,
+      result.archiveUrl ?? null,
     ]
   );
 

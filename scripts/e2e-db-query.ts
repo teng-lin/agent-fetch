@@ -205,6 +205,22 @@ async function formatQuality(): Promise<void> {
     }
   }
 
+  // Archive fallback usage
+  if (quality.archive_fallback.total_uses > 0) {
+    console.log('\n  Archive Fallback Usage:');
+    console.log('  ' + '-'.repeat(80));
+    console.log(
+      `  Total: ${quality.archive_fallback.total_uses} uses across ${quality.archive_fallback.unique_urls} unique URLs`
+    );
+    for (const row of quality.archive_fallback.urls) {
+      const url = fitColumn(row.url, 50);
+      const archiveHost = new URL(row.archive_url).hostname;
+      console.log(`  ${url} x${String(row.count).padStart(2)}  via ${archiveHost}`);
+    }
+  } else {
+    console.log('\n  Archive Fallback Usage: None');
+  }
+
   console.log('');
 }
 

@@ -95,6 +95,11 @@ interface QualityStats {
     last_error: string | null;
     last_strategy: string | null;
   }[];
+  archive_fallback: {
+    total_uses: number;
+    unique_urls: number;
+    urls: { url: string; archive_url: string; count: number }[];
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +244,37 @@ export async function getQualityStats(): Promise<QualityStats | null> {
       `)
     );
 
-    return { strategy_distribution, error_breakdown, content_length_buckets, failed_urls };
+    // Archive fallback usage stats
+    const archiveUrls = rowsToObjects<{ url: string; archive_url: string; count: number }>(
+      db.exec(`
+        SELECT url, archive_url, COUNT(*) as count
+        FROM test_results
+        WHERE archive_url IS NOT NULL
+        GROUP BY url, archive_url
+        ORDER BY count DESC
+      `)
+    );
+
+    const archiveTotals = db.exec(`
+      SELECT COUNT(*) as total_uses, COUNT(DISTINCT url) as unique_urls
+      FROM test_results
+      WHERE archive_url IS NOT NULL
+    `);
+    const [totalUses, uniqueUrls] = archiveTotals[0]?.values[0] ?? [0, 0];
+
+    const archive_fallback = {
+      total_uses: Number(totalUses),
+      unique_urls: Number(uniqueUrls),
+      urls: archiveUrls,
+    };
+
+    return {
+      strategy_distribution,
+      error_breakdown,
+      content_length_buckets,
+      failed_urls,
+      archive_fallback,
+    };
   });
 }
 

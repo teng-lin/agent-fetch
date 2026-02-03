@@ -102,6 +102,7 @@ describe('E2E Fetch Tests', () => {
           contentLength: result.textContent?.length,
           errorMessage: result.error,
           antibotDetections: result.antibot?.map((d) => d.provider),
+          archiveUrl: result.archiveUrl,
         });
         const words = wordCount(result.textContent);
         console.log(`${tc.site}: ${result.success ? 'OK' : 'FAIL'} - ${words} words`);
