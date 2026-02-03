@@ -7,7 +7,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   prettier,
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**', '.worktrees/**'],
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**', '.worktrees/**', 'compare-all.*'],
   },
   {
     files: ['**/*.ts'],

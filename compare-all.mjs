@@ -18,9 +18,21 @@ if (!fetchRuns[0] || fetchRuns[0].values.length === 0) {
   process.exit(1);
 }
 
-const runIds = fetchRuns[0].values.map(r => r[0]);
-const runLabels = fetchRuns[0].values.map((r, i) => `R${i+1}`);
-const runNotes = ['home', 'home', 'home', 'home', 'home', 'home+retry', 'home+retry', 'starbucks', 'starbucks', 'starbucks2', 'cell'];
+const runIds = fetchRuns[0].values.map((r) => r[0]);
+const runLabels = fetchRuns[0].values.map((r, i) => `R${i + 1}`);
+const runNotes = [
+  'home',
+  'home',
+  'home',
+  'home',
+  'home',
+  'home+retry',
+  'home+retry',
+  'starbucks',
+  'starbucks',
+  'starbucks2',
+  'cell',
+];
 
 // Get all site data
 const siteData = db.exec(`
@@ -32,11 +44,18 @@ const siteData = db.exec(`
 `);
 
 const siteMap = new Map();
-siteData[0]?.values.forEach(r => {
+siteData[0]?.values.forEach((r) => {
   const site = r[0];
   const runId = r[1];
   if (!siteMap.has(site)) siteMap.set(site, new Map());
-  siteMap.get(site).set(runId, { success: r[2], words: r[3], latency: r[4], method: r[5], error: r[6], status: r[7] });
+  siteMap.get(site).set(runId, {
+    success: r[2],
+    words: r[3],
+    latency: r[4],
+    method: r[5],
+    error: r[6],
+    status: r[7],
+  });
 });
 
 const colW = 9;
@@ -61,18 +80,22 @@ function cellVal(d) {
 console.log('=== SITE-BY-SITE: WORD COUNT (number=words, else=error) ===\n');
 
 let hdr = 'Site'.padEnd(siteW);
-runLabels.forEach((l, i) => { hdr += l.padStart(colW); });
+runLabels.forEach((l, i) => {
+  hdr += l.padStart(colW);
+});
 console.log(hdr);
 
 let noteHdr = ''.padEnd(siteW);
-runNotes.slice(0, runLabels.length).forEach(n => { noteHdr += n.substring(0, colW).padStart(colW); });
+runNotes.slice(0, runLabels.length).forEach((n) => {
+  noteHdr += n.substring(0, colW).padStart(colW);
+});
 console.log(noteHdr);
 console.log('-'.repeat(hdr.length));
 
 for (const site of sites) {
   const data = siteMap.get(site);
   let line = site.substring(0, siteW - 1).padEnd(siteW);
-  runIds.forEach(rid => {
+  runIds.forEach((rid) => {
     line += cellVal(data.get(rid)).padStart(colW);
   });
   console.log(line);
@@ -82,19 +105,26 @@ for (const site of sites) {
 console.log('\n\n=== SITE-BY-SITE: LATENCY in ms (successful fetches only) ===\n');
 
 hdr = 'Site'.padEnd(siteW);
-runLabels.forEach(l => { hdr += l.padStart(colW); });
+runLabels.forEach((l) => {
+  hdr += l.padStart(colW);
+});
 console.log(hdr);
 noteHdr = ''.padEnd(siteW);
-runNotes.slice(0, runLabels.length).forEach(n => { noteHdr += n.substring(0, colW).padStart(colW); });
+runNotes.slice(0, runLabels.length).forEach((n) => {
+  noteHdr += n.substring(0, colW).padStart(colW);
+});
 console.log(noteHdr);
 console.log('-'.repeat(hdr.length));
 
 for (const site of sites) {
   const data = siteMap.get(site);
   let line = site.substring(0, siteW - 1).padEnd(siteW);
-  runIds.forEach(rid => {
+  runIds.forEach((rid) => {
     const d = data.get(rid);
-    if (!d || !d.success) { line += '-'.padStart(colW); return; }
+    if (!d || !d.success) {
+      line += '-'.padStart(colW);
+      return;
+    }
     line += String(d.latency || 0).padStart(colW);
   });
   console.log(line);
@@ -107,7 +137,13 @@ const r7 = runIds[6];
 const r9 = runIds[8];
 const r11 = runIds[runIds.length - 1];
 
-console.log('Site'.padEnd(siteW) + 'R7 Home'.padStart(12) + 'R9 Starbux'.padStart(12) + 'R11 Cell'.padStart(12) + '  Notes');
+console.log(
+  'Site'.padEnd(siteW) +
+    'R7 Home'.padStart(12) +
+    'R9 Starbux'.padStart(12) +
+    'R11 Cell'.padStart(12) +
+    '  Notes'
+);
 console.log('-'.repeat(siteW + 36 + 12));
 
 for (const site of sites) {
@@ -133,7 +169,9 @@ for (const site of sites) {
   else if (ok7 && !ok9) note = 'starbucks issue';
   else if (ok9 !== ok11 || v9 !== v11) note = 'network-dependent';
 
-  console.log(site.padEnd(siteW) + v7.padStart(12) + v9.padStart(12) + v11.padStart(12) + '  ' + note);
+  console.log(
+    site.padEnd(siteW) + v7.padStart(12) + v9.padStart(12) + v11.padStart(12) + '  ' + note
+  );
 }
 
 db.close();
