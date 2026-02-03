@@ -646,6 +646,19 @@ export function tryNextRscExtraction(html: string, url: string): ExtractionResul
 }
 
 /**
+ * Detect WordPress REST API availability from HTML.
+ * WordPress sites with the REST API enabled include a link tag like:
+ *   <link rel="alternate" type="application/json" href="/wp-json/wp/v2/posts/123" />
+ * Returns the API URL if found and it points to wp-json, null otherwise.
+ */
+export function detectWpRestApi(document: Document): string | null {
+  const link = document.querySelector('link[rel="alternate"][type="application/json"]');
+  const href = link?.getAttribute('href');
+  if (!href || !href.includes('/wp-json/')) return null;
+  return href;
+}
+
+/**
  * Multi-strategy extraction from HTML
  * Exported for testing and direct HTML extraction use cases
  * Uses linkedom for DOM parsing (crash-resistant, no CSS parsing errors)
