@@ -168,6 +168,92 @@ function htmlToText(html: string): string | null {
 }
 
 /**
+ * Detect if a WP REST API response is a PMC list (has pmc_list_order in meta).
+ * Returns the array of list item IDs if found, null otherwise.
+ */
+function detectPmcListOrder(post: Record<string, unknown>): number[] | null {
+  const meta = post.meta as Record<string, unknown> | undefined;
+  const listOrder = meta?.pmc_list_order;
+
+  if (!Array.isArray(listOrder) || listOrder.length === 0) return null;
+  if (!listOrder.every((id) => typeof id === 'number')) return null;
+
+  return listOrder as number[];
+}
+
+/** Maximum list items to fetch to prevent abuse */
+const MAX_LIST_ITEMS = 200;
+
+/** Batch size for WP REST API requests */
+const WP_LIST_BATCH_SIZE = 50;
+
+/**
+ * Fetch WP list items in batch and concatenate their content.
+ * Returns combined HTML content from all list items.
+ */
+async function fetchPmcListItems(
+  origin: string,
+  itemIds: number[],
+  preset?: string
+): Promise<string | null> {
+  // Limit items to prevent abuse
+  const limitedIds = itemIds.slice(0, MAX_LIST_ITEMS);
+  if (itemIds.length > MAX_LIST_ITEMS) {
+    logger.debug(
+      { itemCount: itemIds.length, limit: MAX_LIST_ITEMS },
+      'WP list truncated to maximum items'
+    );
+  }
+
+  const allContents: string[] = [];
+
+  for (let i = 0; i < limitedIds.length; i += WP_LIST_BATCH_SIZE) {
+    const batch = limitedIds.slice(i, i + WP_LIST_BATCH_SIZE);
+    const includeParam = batch.join(',');
+    const apiUrl = `${origin}/wp-json/wp/v2/pmc_list_item?include=${includeParam}&per_page=${WP_LIST_BATCH_SIZE}`;
+
+    logger.debug({ apiUrl, count: batch.length }, 'Fetching WP list items batch');
+
+    const response = await httpRequest(apiUrl, { Accept: 'application/json' }, preset);
+    if (!response.success || !response.html) continue;
+
+    let items: unknown[];
+    try {
+      const parsed = JSON.parse(response.html);
+      if (!Array.isArray(parsed)) continue;
+      items = parsed;
+    } catch {
+      logger.debug({ apiUrl }, 'Failed to parse WP list items response');
+      continue;
+    }
+
+    // Create a map for ordering
+    const itemMap = new Map<number, string>();
+    for (const item of items) {
+      if (typeof item !== 'object' || !item) continue;
+      const id = (item as Record<string, unknown>).id;
+      if (typeof id !== 'number') continue;
+      const contentHtml = resolveWpField((item as Record<string, unknown>).content);
+      if (contentHtml) {
+        itemMap.set(id, contentHtml);
+      }
+    }
+
+    // Add in original order
+    for (const id of batch) {
+      const content = itemMap.get(id);
+      if (content) {
+        allContents.push(content);
+      }
+    }
+  }
+
+  if (allContents.length === 0) return null;
+
+  return allContents.join('\n\n');
+}
+
+/**
  * Resolve a WP REST API field that may be a plain string (custom endpoints)
  * or an object with a `rendered` property (standard WP).
  */
@@ -207,6 +293,7 @@ function resolveWpPost(raw: unknown): Record<string, unknown> | null {
 /**
  * Try fetching article content from WordPress REST API.
  * Appends ?_embed to the URL to get author data in the response.
+ * Detects PMC lists and fetches all list items for complete content.
  * Returns an ExtractionResult if API returns sufficient content, null otherwise.
  */
 async function tryWpRestApiExtraction(
@@ -225,7 +312,27 @@ async function tryWpRestApiExtraction(
     const json = resolveWpPost(JSON.parse(response.html));
     if (!json) return null;
 
-    const contentHtml = resolveWpField(json.content);
+    // Check for PMC list structure (has pmc_list_order in meta)
+    const pmcListOrder = detectPmcListOrder(json);
+    let contentHtml = resolveWpField(json.content) ?? '';
+    let method = 'wp-rest-api';
+
+    if (pmcListOrder && pmcListOrder.length > 0) {
+      // This is a PMC list - fetch all list items
+      const origin = new URL(apiUrl).origin;
+      logger.info(
+        { apiUrl, itemCount: pmcListOrder.length },
+        'Detected PMC list, fetching list items'
+      );
+
+      const listItemsHtml = await fetchPmcListItems(origin, pmcListOrder, preset);
+      if (listItemsHtml) {
+        // Combine intro content with list items, avoiding leading whitespace
+        contentHtml = contentHtml ? contentHtml + '\n\n' + listItemsHtml : listItemsHtml;
+        method = 'wp-rest-api-pmc-list';
+      }
+    }
+
     if (!contentHtml) return null;
 
     const textContent = htmlToText(contentHtml) ?? '';
@@ -251,7 +358,7 @@ async function tryWpRestApiExtraction(
       publishedTime: dateGmt ?? originalResult?.publishedTime ?? null,
       lang: originalResult?.lang ?? null,
       markdown: htmlToMarkdown(contentHtml),
-      method: 'wp-rest-api',
+      method,
     };
   } catch (e) {
     logger.debug({ apiUrl, error: String(e) }, 'WordPress REST API extraction failed');
