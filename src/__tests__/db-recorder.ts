@@ -112,6 +112,28 @@ export async function initializeDatabase(): Promise<void> {
 
     saveDatabaseToDisk();
   } else {
+    // Migrate existing database: ensure new tables and columns exist
+    db.run(`
+      CREATE TABLE IF NOT EXISTS test_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        test_name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        status TEXT NOT NULL,
+        http_status INTEGER,
+        fetch_duration_ms INTEGER,
+        extract_strategy TEXT,
+        content_length INTEGER,
+        error_message TEXT,
+        antibot_detections TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (run_id) REFERENCES test_runs(run_id)
+      );
+    `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_run_id ON test_results(run_id);`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_url ON test_results(url);`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);`);
+
     // Migrate existing test_runs: add columns if they don't exist
     const columnsResult = db.exec('PRAGMA table_info(test_runs)');
     const existingColumns = new Set(columnsResult[0]?.values.map((row) => row[1] as string) ?? []);
@@ -120,6 +142,7 @@ export async function initializeDatabase(): Promise<void> {
         db.run(`ALTER TABLE test_runs ADD COLUMN ${col} TEXT`);
       }
     }
+    saveDatabaseToDisk();
   }
 }
 
