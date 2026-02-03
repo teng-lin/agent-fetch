@@ -434,7 +434,9 @@
     "userAgent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6533.103 Mobile Safari/537.36 Lamarr",
     "allowCookies": true,
     "blockPatterns": ["\\/zephr\\/", "\\.economist\\.com\\/(latest\\/wall-ui|script)\\.js"],
-    "usesArchiveFallback": true
+    "usesArchiveFallback": true,
+    "useNextData": true,
+    "nextDataPath": "props.pageProps.content.body"
   },
   "editorialedomani.it": {
     "allowCookies": true,

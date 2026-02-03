@@ -432,6 +432,89 @@ function extractTextFromHtml(html: string): string {
 }
 
 /**
+ * Extract byline from an authors array
+ */
+function extractBylineFromAuthors(authors: unknown): string | null {
+  if (!Array.isArray(authors) || authors.length === 0) return null;
+  const names = authors
+    .map((author: unknown) => {
+      if (
+        author &&
+        typeof author === 'object' &&
+        'name' in author &&
+        typeof (author as { name: unknown }).name === 'string'
+      ) {
+        return (author as { name: string }).name;
+      }
+      return null;
+    })
+    .filter((name): name is string => name !== null && name.length > 0);
+  return names.length > 0 ? names.join(', ') : null;
+}
+
+/**
+ * Content block with type and text/textHtml fields
+ */
+interface ContentBlock {
+  type?: string;
+  text?: string;
+  textHtml?: string;
+  components?: ContentBlock[];
+  items?: ContentBlock[];
+}
+
+/**
+ * Extract text from an array of content blocks.
+ * Handles structures where body is an array of typed blocks with text/textHtml fields.
+ */
+function extractTextFromContentBlocks(blocks: ContentBlock[]): string {
+  const textParts: string[] = [];
+
+  function processBlock(block: ContentBlock): void {
+    if (!block || typeof block !== 'object') return;
+    const blockType = typeof block.type === 'string' ? block.type.toUpperCase() : undefined;
+
+    // Extract text from paragraph-like blocks
+    if (blockType === 'PARAGRAPH' || blockType === 'HEADING' || blockType === 'SUBHEADING') {
+      const text = block.text ?? (block.textHtml ? extractTextFromHtml(block.textHtml) : '');
+      if (text) {
+        textParts.push(text);
+        textParts.push('\n\n');
+      }
+      return;
+    }
+
+    // Handle list items
+    if (blockType === 'UNORDERED_LIST' || blockType === 'ORDERED_LIST') {
+      if (Array.isArray(block.items)) {
+        for (const item of block.items) {
+          if (!item || typeof item !== 'object') continue;
+          const text = item.text ?? (item.textHtml ? extractTextFromHtml(item.textHtml) : '');
+          if (text) {
+            textParts.push(`• ${text}\n`);
+          }
+        }
+        textParts.push('\n');
+      }
+      return;
+    }
+
+    // Recurse into nested components (e.g., INFOBOX)
+    if (Array.isArray(block.components)) {
+      for (const component of block.components) {
+        processBlock(component);
+      }
+    }
+  }
+
+  for (const block of blocks) {
+    processBlock(block);
+  }
+
+  return textParts.join('').trim();
+}
+
+/**
  * Strategy 4: Extract from Next.js __NEXT_DATA__
  * Some sites embed full article content in the page props JSON.
  * Supports two modes:
@@ -451,6 +534,41 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
     const customPath = getSiteNextDataPath(url);
     if (customPath) {
       const content = getByPath(data, customPath);
+
+      // Handle array of content blocks
+      if (Array.isArray(content)) {
+        const textContent = extractTextFromContentBlocks(
+          content.filter((item): item is ContentBlock => item && typeof item === 'object')
+        );
+        if (textContent.length >= MIN_CONTENT_LENGTH) {
+          logger.debug(
+            { url, path: customPath },
+            'Next.js custom path (array) extraction succeeded'
+          );
+          // Extract metadata from content structure
+          const contentMeta = pageProps.content ?? {};
+          return {
+            title: contentMeta.headline ?? pageProps.title ?? extractTitle(document),
+            byline: extractBylineFromAuthors(contentMeta.authors) ?? pageProps.author?.name ?? null,
+            content: textContent,
+            textContent,
+            excerpt:
+              contentMeta.description ??
+              pageProps.teaser_body ??
+              generateExcerpt(null, textContent),
+            siteName: extractSiteName(document),
+            publishedTime:
+              contentMeta.datePublished ??
+              pageProps.publishedAt ??
+              pageProps.changed_formatted ??
+              extractPublishedTime(document),
+            lang: document.documentElement.lang || 'en',
+            method: 'next-data',
+          };
+        }
+      }
+
+      // Handle string content (existing behavior)
       if (typeof content === 'string' && content.length >= MIN_CONTENT_LENGTH) {
         // Content might be HTML or plain text - check for common HTML tags
         const isHtml = /<(?:p|div)>/.test(content);
