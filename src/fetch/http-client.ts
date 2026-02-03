@@ -339,28 +339,12 @@ export async function httpRequest(
     try {
       const response = await Promise.race([session.get(url, headers), timeoutPromise]);
 
-      // DNS rebinding protection: re-validate after connection
+      // DNS rebinding protection: re-validate SSRF after connection
+      // This catches attacks where DNS resolves to a private IP after the initial check.
+      // Note: We don't require exact IP match because CDNs (CloudFront, Cloudflare, Akamai)
+      // use rotating anycast DNS that returns different IPs on each lookup.
       if (preConnectionIPs.length > 0) {
-        const postConnectionIPs = await validateSSRFWithTimeout(url);
-
-        // Compare IP sets (order-independent comparison)
-        const ipsMatch =
-          preConnectionIPs.length === postConnectionIPs.length &&
-          preConnectionIPs.every((ip) => postConnectionIPs.includes(ip));
-
-        if (!ipsMatch) {
-          logger.warn(
-            { url, preConnectionIPs, postConnectionIPs },
-            'DNS rebinding detected - IPs changed between validation and connection'
-          );
-          return {
-            success: false,
-            statusCode: 0,
-            headers: {},
-            cookies: [],
-            error: 'dns_rebinding_detected',
-          };
-        }
+        await validateSSRFWithTimeout(url);
       }
 
       // Check Content-Length before downloading body to prevent memory exhaustion

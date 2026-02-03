@@ -249,6 +249,14 @@ export function siteUseNextData(url: string): boolean {
 }
 
 /**
+ * Get custom JSON path for Next.js __NEXT_DATA__ extraction
+ * Path uses dot notation (e.g., "props.pageProps.paragraph.0.description")
+ */
+export function getSiteNextDataPath(url: string): string | null {
+  return getSiteConfig(url)?.nextDataPath ?? null;
+}
+
+/**
  * Check if a site uses WordPress REST API extraction
  */
 export function siteUseWpRestApi(url: string): boolean {

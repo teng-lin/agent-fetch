@@ -33,6 +33,7 @@ vi.mock('../logger.js', () => ({
 vi.mock('../sites/site-config.js', () => ({
   sitePreferJsonLd: vi.fn(() => false),
   siteUseNextData: vi.fn(() => false),
+  getSiteNextDataPath: vi.fn(() => null),
 }));
 
 import { sitePreferJsonLd, siteUseNextData } from '../sites/site-config.js';

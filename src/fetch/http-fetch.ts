@@ -31,8 +31,10 @@ const MIN_GOOD_WORD_COUNT = 100;
 const MAX_RETRIES = 2;
 const BASE_RETRY_DELAY_MS = 1000;
 
-// Errors that should NOT be retried even though statusCode is 0
-const NON_RETRYABLE_ERRORS = new Set(['dns_rebinding_detected']);
+/** Check if an error is a security error that should not be retried. */
+function isSecurityError(error: string | undefined): boolean {
+  return error?.includes('SSRF protection') ?? false;
+}
 
 const VALIDATION_ERROR_HINTS: Partial<Record<ValidationError, string>> = {
   challenge_detected: 'This site uses anti-bot challenges',
@@ -363,11 +365,7 @@ function runAntibotDetection(
 
 /** Check if a failed response is a transient network error worth retrying. */
 function isRetryableError(response: HttpResponse): boolean {
-  return (
-    !response.success &&
-    response.statusCode === 0 &&
-    !NON_RETRYABLE_ERRORS.has(response.error ?? '')
-  );
+  return !response.success && response.statusCode === 0 && !isSecurityError(response.error);
 }
 
 /** Exponential backoff delay for a given retry attempt (0-indexed). */

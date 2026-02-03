@@ -226,11 +226,33 @@ describe('fetch/http-client', () => {
       expect(result.error).toContain('Connection refused');
     });
 
-    it('detects DNS rebinding when IPs change between pre and post validation', async () => {
+    it('allows IP changes between public IPs (CDN rotation)', async () => {
       // Pre-connection resolves to one public IP, post-connection resolves to a different public IP
+      // This is normal behavior for CDNs like CloudFront that use rotating anycast DNS
       vi.mocked(dns.resolve4)
         .mockResolvedValueOnce(['93.184.216.34'])
         .mockResolvedValueOnce(['198.51.100.1']);
+      vi.mocked(dns.resolve6).mockRejectedValue(new Error('no AAAA'));
+
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>CDN rotated</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      const result = await httpRequest('https://example.com/page');
+      expect(result.success).toBe(true);
+      expect(result.html).toBe('<html>CDN rotated</html>');
+    });
+
+    it('detects DNS rebinding to private IP after connection', async () => {
+      // Pre-connection resolves to public IP, post-connection resolves to private IP
+      // This is a DNS rebinding attack that should be blocked
+      vi.mocked(dns.resolve4)
+        .mockResolvedValueOnce(['93.184.216.34'])
+        .mockResolvedValueOnce(['192.168.1.1']); // Private IP!
       vi.mocked(dns.resolve6).mockRejectedValue(new Error('no AAAA'));
 
       mockGet.mockResolvedValue({
@@ -243,7 +265,7 @@ describe('fetch/http-client', () => {
 
       const result = await httpRequest('https://example.com/page');
       expect(result.success).toBe(false);
-      expect(result.error).toBe('dns_rebinding_detected');
+      expect(result.error).toContain('SSRF protection');
     });
 
     it('rejects response body exceeding size limit without Content-Length', async () => {

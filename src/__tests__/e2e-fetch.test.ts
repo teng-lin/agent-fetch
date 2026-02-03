@@ -83,7 +83,9 @@ describe('E2E Fetch Tests', () => {
 
     const failures: string[] = [];
     const transientSkips: string[] = [];
-    const TRANSIENT_ERRORS = ['dns_rebinding_detected'];
+    // Previously included dns_rebinding_detected for CDN rotation false positives.
+    // Fixed in the DNS rebinding check - now CDN IP rotation is allowed.
+    const TRANSIENT_ERRORS: string[] = [];
 
     await runWithConcurrency(filteredCases, TEST_CONCURRENCY, async (tc) => {
       console.log(`Testing ${tc.site}...`);

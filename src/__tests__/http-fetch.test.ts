@@ -552,7 +552,7 @@ describe('httpFetch', () => {
     expect(httpRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('does not retry dns_rebinding_detected errors', async () => {
+  it('does not retry SSRF protection errors', async () => {
     const url = 'https://evil.com/article';
 
     vi.mocked(httpRequest).mockResolvedValue({
@@ -560,13 +560,13 @@ describe('httpFetch', () => {
       statusCode: 0,
       headers: {},
       cookies: [],
-      error: 'dns_rebinding_detected',
+      error: 'SSRF protection: hostname evil.com resolves to private IP 192.168.1.1',
     });
 
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('dns_rebinding_detected');
+    expect(result.error).toContain('SSRF protection');
     expect(httpRequest).toHaveBeenCalledTimes(1);
   });
 

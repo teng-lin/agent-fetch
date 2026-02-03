@@ -14,7 +14,7 @@ import {
 } from './types.js';
 import { htmlToMarkdown } from './markdown.js';
 import { meetsThreshold } from './utils.js';
-import { sitePreferJsonLd, siteUseNextData } from '../sites/site-config.js';
+import { sitePreferJsonLd, siteUseNextData, getSiteNextDataPath } from '../sites/site-config.js';
 import { logger } from '../logger.js';
 
 // Selectors for finding published time
@@ -411,9 +411,32 @@ function withMarkdown(result: ExtractionResult): ExtractionResult {
 }
 
 /**
+ * Get a value from an object by dot-notation path (e.g., "props.pageProps.paragraph.0.description")
+ */
+function getByPath(obj: unknown, path: string): unknown {
+  let current: unknown = obj;
+  for (const part of path.split('.')) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+/**
+ * Extract text content from HTML string
+ */
+function extractTextFromHtml(html: string): string {
+  // Wrap in full HTML structure so linkedom parses correctly
+  const { document } = parseHTML(`<!DOCTYPE html><html><body>${html}</body></html>`);
+  return document.body.textContent?.trim() ?? '';
+}
+
+/**
  * Strategy 4: Extract from Next.js __NEXT_DATA__
- * Some sites embed full article content in the page props JSON
- * (configured via siteUseNextData in site configs)
+ * Some sites embed full article content in the page props JSON.
+ * Supports two modes:
+ * 1. Site-specific: Use nextDataPath config to specify custom JSON path (content can be HTML or text)
+ * 2. Default: Look for story.body.content structured blocks
  */
 export function tryNextDataExtraction(document: Document, url: string): ExtractionResult | null {
   try {
@@ -421,7 +444,41 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
     if (!script?.textContent) return null;
 
     const data = JSON.parse(script.textContent);
-    const story = data?.props?.pageProps?.story;
+    const pageProps = data?.props?.pageProps;
+    if (!pageProps) return null;
+
+    // Try site-specific path first
+    const customPath = getSiteNextDataPath(url);
+    if (customPath) {
+      const content = getByPath(data, customPath);
+      if (typeof content === 'string' && content.length >= MIN_CONTENT_LENGTH) {
+        // Content might be HTML or plain text - check for common HTML tags
+        const isHtml = /<(?:p|div)>/.test(content);
+        const textContent = isHtml ? extractTextFromHtml(content) : content;
+
+        if (textContent.length >= MIN_CONTENT_LENGTH) {
+          logger.debug({ url, path: customPath }, 'Next.js custom path extraction succeeded');
+          return {
+            title: pageProps.title ?? extractTitle(document),
+            byline: pageProps.author?.name ?? null,
+            content: isHtml ? content : textContent,
+            textContent,
+            excerpt:
+              pageProps.teaser_body ?? pageProps.description ?? generateExcerpt(null, textContent),
+            siteName: extractSiteName(document),
+            publishedTime:
+              pageProps.publishedAt ??
+              pageProps.changed_formatted ??
+              extractPublishedTime(document),
+            lang: document.documentElement.lang || 'en',
+            method: 'next-data',
+          };
+        }
+      }
+    }
+
+    // Default: Try story.body.content structured blocks
+    const story = pageProps?.story;
     if (!story?.body?.content) return null;
 
     // Extract text from the structured content
