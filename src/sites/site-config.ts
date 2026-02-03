@@ -7,10 +7,49 @@
  */
 import { z } from 'zod';
 import { MINIMAL_DEFAULTS } from './minimal-defaults.js';
-import { USER_AGENTS, REFERERS, BLOCK_PATTERNS } from './constants.js';
+import { USER_AGENTS, REFERERS, BLOCK_PATTERNS, convertBlockPatterns } from './constants.js';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 // Re-export constants for backward compatibility
 export { USER_AGENTS, REFERERS, BLOCK_PATTERNS };
+
+function loadJsonSiteConfigs(): Record<string, SiteConfig> {
+  try {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const configPath = join(__dirname, '..', '..', 'config', 'sites.json');
+    const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
+    const configs: Record<string, SiteConfig> = {};
+
+    for (const [domain, rawConfig] of Object.entries(raw)) {
+      const cfg = rawConfig as Record<string, unknown>;
+      const config: SiteConfig = {};
+
+      if (cfg.userAgent) config.userAgent = String(cfg.userAgent);
+      if (cfg.referer) config.referer = String(cfg.referer);
+      if (cfg.allowCookies) config.allowCookies = Boolean(cfg.allowCookies);
+      if (cfg.usesArchiveFallback) config.usesArchiveFallback = Boolean(cfg.usesArchiveFallback);
+      if (cfg.preferJsonLd) config.preferJsonLd = Boolean(cfg.preferJsonLd);
+      if (cfg.useNextData) config.useNextData = Boolean(cfg.useNextData);
+      if (cfg.nextDataPath) config.nextDataPath = String(cfg.nextDataPath);
+      if (cfg.notes) config.notes = String(cfg.notes);
+      if (Array.isArray(cfg.archiveSelectors)) {
+        config.archiveSelectors = cfg.archiveSelectors.map(String);
+      }
+      if (Array.isArray(cfg.blockPatterns)) {
+        config.blockPatterns = convertBlockPatterns(cfg.blockPatterns);
+      }
+
+      configs[domain] = config;
+    }
+
+    return configs;
+  } catch {
+    // Config file missing or invalid -- continue with minimal defaults
+    return {};
+  }
+}
 
 // --- Site config interface ---
 
@@ -54,7 +93,11 @@ export const SiteConfigSchema = z.object({
 
 // --- Module-level variable ---
 
-const SITE_CONFIGS: Record<string, SiteConfig> = { ...MINIMAL_DEFAULTS };
+// JSON configs loaded first, then minimal defaults override (development examples take priority)
+const SITE_CONFIGS: Record<string, SiteConfig> = {
+  ...loadJsonSiteConfigs(),
+  ...MINIMAL_DEFAULTS,
+};
 
 // --- Validation ---
 

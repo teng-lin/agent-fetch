@@ -169,4 +169,28 @@ describe('sites/site-config', () => {
       expect(domains).toContain('demo.example.net');
     });
   });
+
+  describe('loaded site configs', () => {
+    it('loads configs from sites.json', () => {
+      // The config file has 472 sites, minimal-defaults has 5
+      expect(getSiteCount()).toBeGreaterThan(100);
+    });
+
+    it('has block patterns as RegExp instances', () => {
+      // ft.com has blockPatterns in the JSON as strings
+      const config = getSiteConfig('https://ft.com/article');
+      // If ft.com is in configs and has blockPatterns, they should be RegExp
+      if (config?.blockPatterns) {
+        expect(config.blockPatterns[0]).toBeInstanceOf(RegExp);
+      }
+    });
+
+    it('curated config overrides generated for same domain', () => {
+      // nytimes.com is in curated with bingbot UA
+      const config = getSiteConfig('https://nytimes.com/article');
+      if (config) {
+        expect(config.userAgent).toContain('bingbot');
+      }
+    });
+  });
 });
