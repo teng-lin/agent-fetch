@@ -672,37 +672,53 @@ describe('content-extractors', () => {
   });
 
   describe('detectWpRestApi', () => {
+    const pageUrl = 'https://example.com/2024/01/article/';
+
     it('returns API URL from link[rel=alternate][type=application/json] with wp-json href', () => {
       const doc = makeDoc(`<html><head>
         <link rel="alternate" type="application/json" href="https://example.com/wp-json/wp/v2/posts/123" />
       </head><body></body></html>`);
-      expect(detectWpRestApi(doc)).toBe('https://example.com/wp-json/wp/v2/posts/123');
+      expect(detectWpRestApi(doc, pageUrl)).toBe('https://example.com/wp-json/wp/v2/posts/123');
     });
 
     it('returns null when no WP REST API link present', () => {
       const doc = makeDoc('<html><head></head><body></body></html>');
-      expect(detectWpRestApi(doc)).toBeNull();
+      expect(detectWpRestApi(doc, pageUrl)).toBeNull();
     });
 
     it('returns null for non-wp-json alternate links', () => {
       const doc = makeDoc(`<html><head>
         <link rel="alternate" type="application/json" href="https://example.com/api/v1/posts/123" />
       </head><body></body></html>`);
-      expect(detectWpRestApi(doc)).toBeNull();
+      expect(detectWpRestApi(doc, pageUrl)).toBeNull();
     });
 
     it('returns null for RSS feed alternate links', () => {
       const doc = makeDoc(`<html><head>
         <link rel="alternate" type="application/rss+xml" href="https://example.com/feed/" />
       </head><body></body></html>`);
-      expect(detectWpRestApi(doc)).toBeNull();
+      expect(detectWpRestApi(doc, pageUrl)).toBeNull();
     });
 
     it('returns null when href is empty', () => {
       const doc = makeDoc(`<html><head>
         <link rel="alternate" type="application/json" href="" />
       </head><body></body></html>`);
-      expect(detectWpRestApi(doc)).toBeNull();
+      expect(detectWpRestApi(doc, pageUrl)).toBeNull();
+    });
+
+    it('returns null when API URL is a different origin (SSRF prevention)', () => {
+      const doc = makeDoc(`<html><head>
+        <link rel="alternate" type="application/json" href="https://evil.com/wp-json/wp/v2/posts/123" />
+      </head><body></body></html>`);
+      expect(detectWpRestApi(doc, pageUrl)).toBeNull();
+    });
+
+    it('returns null for internal IP addresses (SSRF prevention)', () => {
+      const doc = makeDoc(`<html><head>
+        <link rel="alternate" type="application/json" href="http://169.254.169.254/wp-json/latest/meta-data" />
+      </head><body></body></html>`);
+      expect(detectWpRestApi(doc, pageUrl)).toBeNull();
     });
   });
 });

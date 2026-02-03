@@ -147,6 +147,12 @@ async function tryArchiveFallback(
   }
 }
 
+/** Strip HTML tags and decode entities by parsing a fragment and returning its text content. */
+function htmlToText(html: string): string | null {
+  const { document } = parseHTML(`<div>${html}</div>`);
+  return document.querySelector('div')?.textContent?.trim() ?? null;
+}
+
 /**
  * Try fetching article content from WordPress REST API.
  * Appends ?_embed to the URL to get author data in the response.
@@ -158,7 +164,6 @@ async function tryWpRestApiExtraction(
   preset?: string
 ): Promise<ExtractionResult | null> {
   try {
-    // Append ?_embed to get _embedded.author data
     const embedUrl = apiUrl + (apiUrl.includes('?') ? '&_embed' : '?_embed');
     logger.info({ apiUrl: embedUrl }, 'Trying WordPress REST API extraction');
 
@@ -170,24 +175,14 @@ async function tryWpRestApiExtraction(
     const contentHtml = json.content?.rendered;
     if (!contentHtml || typeof contentHtml !== 'string') return null;
 
-    // Parse the HTML content to get text
-    const { document } = parseHTML(`<div>${contentHtml}</div>`);
-    const textContent = document.querySelector('div')?.textContent?.trim() ?? '';
-
+    const textContent = htmlToText(contentHtml) ?? '';
     if (textContent.length < GOOD_CONTENT_LENGTH) return null;
 
-    // Clean HTML entities from title
-    const rawTitle = json.title?.rendered;
-    const title = rawTitle
-      ? (parseHTML(`<div>${rawTitle}</div>`).document.querySelector('div')?.textContent ?? null)
+    const title = json.title?.rendered
+      ? (htmlToText(json.title.rendered) ?? null)
       : (originalResult?.title ?? null);
 
-    // Clean excerpt
-    const rawExcerpt = json.excerpt?.rendered;
-    const excerpt = rawExcerpt
-      ? (parseHTML(`<div>${rawExcerpt}</div>`).document.querySelector('div')?.textContent?.trim() ??
-        null)
-      : null;
+    const excerpt = json.excerpt?.rendered ? (htmlToText(json.excerpt.rendered) ?? null) : null;
 
     return {
       title,
@@ -439,7 +434,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     const wordCount = extracted.textContent!.split(/\s+/).length;
     if (wordCount < MIN_GOOD_WORD_COUNT) {
       // Try WP REST API first (faster, more reliable than archives)
-      const wpApiUrl = detectWpRestApi(parseHTML(response.html).document);
+      const wpApiUrl = detectWpRestApi(parseHTML(response.html).document, url);
       if (wpApiUrl) {
         const wpResult = await tryWpRestApiExtraction(wpApiUrl, extracted, preset);
         if (wpResult && (wpResult.textContent?.length ?? 0) >= MIN_CONTENT_LENGTH) {

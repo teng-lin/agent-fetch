@@ -26,19 +26,24 @@ function loadJsonSiteConfigs(): Record<string, SiteConfig> {
       const cfg = rawConfig as Record<string, unknown>;
       const config: SiteConfig = {};
 
-      if (cfg.userAgent) config.userAgent = String(cfg.userAgent);
-      if (cfg.referer) config.referer = String(cfg.referer);
-      if (cfg.allowCookies) config.allowCookies = Boolean(cfg.allowCookies);
-      if (cfg.usesArchiveFallback) config.usesArchiveFallback = Boolean(cfg.usesArchiveFallback);
-      if (cfg.preferJsonLd) config.preferJsonLd = Boolean(cfg.preferJsonLd);
-      if (cfg.useNextData) config.useNextData = Boolean(cfg.useNextData);
-      if (cfg.nextDataPath) config.nextDataPath = String(cfg.nextDataPath);
-      if (cfg.notes) config.notes = String(cfg.notes);
+      if (typeof cfg.userAgent === 'string') config.userAgent = cfg.userAgent;
+      if (typeof cfg.referer === 'string') config.referer = cfg.referer;
+      if (typeof cfg.allowCookies === 'boolean') config.allowCookies = cfg.allowCookies;
+      if (typeof cfg.usesArchiveFallback === 'boolean')
+        config.usesArchiveFallback = cfg.usesArchiveFallback;
+      if (typeof cfg.preferJsonLd === 'boolean') config.preferJsonLd = cfg.preferJsonLd;
+      if (typeof cfg.useNextData === 'boolean') config.useNextData = cfg.useNextData;
+      if (typeof cfg.nextDataPath === 'string') config.nextDataPath = cfg.nextDataPath;
+      if (typeof cfg.notes === 'string') config.notes = cfg.notes;
       if (Array.isArray(cfg.archiveSelectors)) {
         config.archiveSelectors = cfg.archiveSelectors.map(String);
       }
       if (Array.isArray(cfg.blockPatterns)) {
-        config.blockPatterns = convertBlockPatterns(cfg.blockPatterns);
+        try {
+          config.blockPatterns = convertBlockPatterns(cfg.blockPatterns);
+        } catch {
+          // Skip invalid regex patterns for this site rather than losing all configs
+        }
       }
 
       configs[domain] = config;
