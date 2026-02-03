@@ -30,7 +30,8 @@
     "report:curl": "tsx scripts/generate-curl-report.ts",
     "report:fetch-vs-curl": "tsx scripts/generate-fetch-vs-curl-report.ts",
     "e2e:db:cleanup": "tsx scripts/e2e-db-cleanup.ts",
-    "e2e:db:query": "tsx scripts/e2e-db-query.ts"
+    "e2e:db:query": "tsx scripts/e2e-db-query.ts",
+    "e2e:db:compare": "tsx scripts/e2e-db-compare.ts"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
