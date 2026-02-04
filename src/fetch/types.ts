@@ -35,6 +35,11 @@ export interface FetchResult {
   lang?: string;
   markdown?: string;
 
+  // Schema.org access metadata (from publisher-embedded JSON-LD)
+  isAccessibleForFree?: boolean;
+  declaredWordCount?: number;
+  extractedWordCount?: number;
+
   // Error fields
   error?: string;
   errorDetails?: {

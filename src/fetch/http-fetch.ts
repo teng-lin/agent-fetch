@@ -43,6 +43,12 @@ const BASE_RETRY_DELAY_MS = 1000;
  */
 const NEXT_DATA_ROUTE_THRESHOLD = 2000;
 
+/** Count whitespace-delimited words in a string. Returns undefined for empty/null input. */
+function countWords(text: string | null | undefined): number | undefined {
+  if (!text) return undefined;
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
 /** Check if an error is a security error that should not be retried. */
 function isSecurityError(error: string | undefined): boolean {
   return error?.includes('SSRF protection') ?? false;
@@ -108,6 +114,9 @@ function successResult(
     publishedTime: extracted.publishedTime ?? undefined,
     lang: extracted.lang ?? undefined,
     markdown: extracted.markdown ?? undefined,
+    isAccessibleForFree: extracted.isAccessibleForFree,
+    declaredWordCount: extracted.declaredWordCount,
+    extractedWordCount: countWords(extracted.textContent),
     ...extras,
   };
 }

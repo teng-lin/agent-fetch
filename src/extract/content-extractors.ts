@@ -364,6 +364,39 @@ function extractJsonLdMetadata(document: Document): JsonLdMetadata | null {
   return null;
 }
 
+interface SchemaOrgAccessInfo {
+  isAccessibleForFree: boolean;
+  declaredWordCount?: number;
+}
+
+/**
+ * Read the schema.org `isAccessibleForFree` property from JSON-LD structured data
+ * that publishers embed in their pages. Returns a result only when the field is
+ * explicitly set to `false`. Handles both boolean and string representations
+ * (e.g. `"False"` as used by some publishers). Also reads `wordCount` when present.
+ */
+export function detectIsAccessibleForFree(document: Document): SchemaOrgAccessInfo | null {
+  for (const item of parseJsonLdScripts(document)) {
+    if (!isArticleType(item)) continue;
+    if (!('isAccessibleForFree' in item)) continue;
+
+    const raw = item.isAccessibleForFree;
+    const isFree = raw === true || (typeof raw === 'string' && raw.toLowerCase() === 'true');
+    if (isFree) return null;
+
+    const declaredWordCount = parseWordCount(item.wordCount);
+    return { isAccessibleForFree: false, declaredWordCount };
+  }
+  return null;
+}
+
+/** Parse a schema.org wordCount value (number or numeric string) into a number. */
+function parseWordCount(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return parseInt(value, 10) || undefined;
+  return undefined;
+}
+
 /**
  * Compose best metadata from multiple extraction results and JSON-LD metadata.
  * Supplements missing metadata fields on the winner from other sources.
@@ -984,12 +1017,25 @@ export function detectWpRestApi(document: Document, pageUrl: string): string | n
 export function extractFromHtml(html: string, url: string): ExtractionResult | null {
   const { document } = parseHTML(html);
 
+  // Read publisher-declared schema.org access metadata from JSON-LD
+  const schemaOrgAccess = detectIsAccessibleForFree(document);
+
+  /** Attach schema.org access fields to a result before returning. */
+  function withSchemaOrgAccess(result: ExtractionResult): ExtractionResult {
+    if (!schemaOrgAccess) return result;
+    return {
+      ...result,
+      isAccessibleForFree: schemaOrgAccess.isAccessibleForFree,
+      declaredWordCount: schemaOrgAccess.declaredWordCount,
+    };
+  }
+
   // Config-driven: Next.js early return (these sites have complete metadata)
   if (siteUseNextData(url)) {
     const nextDataResult = tryNextDataExtraction(document, url);
     if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'next-data' }, 'Extraction succeeded (Next.js data)');
-      return withMarkdown(nextDataResult!);
+      return withSchemaOrgAccess(withMarkdown(nextDataResult!));
     }
   }
 
@@ -1001,7 +1047,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
-      return withMarkdown(jsonLdResult!);
+      return withSchemaOrgAccess(withMarkdown(jsonLdResult!));
     }
   }
 
@@ -1075,7 +1121,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
       { url, method: winner.method, contentLen: winner.textContent?.length },
       'Extraction succeeded (preferred longest)'
     );
-    return withMarkdown(composeMetadata(winner, allResults, jsonLdMeta));
+    return withSchemaOrgAccess(withMarkdown(composeMetadata(winner, allResults, jsonLdMeta)));
   }
 
   // Fall back to minimum threshold candidates in priority order
@@ -1091,7 +1137,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   for (const [result, threshold] of fallbackCandidates) {
     if (meetsThreshold(result, threshold)) {
       logger.debug({ url, method: result!.method }, 'Extraction succeeded');
-      return withMarkdown(composeMetadata(result!, allResults, jsonLdMeta));
+      return withSchemaOrgAccess(withMarkdown(composeMetadata(result!, allResults, jsonLdMeta)));
     }
   }
 
@@ -1104,7 +1150,9 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     textDensityResult ??
     unfluffResult;
   if (partialResult) {
-    return withMarkdown(composeMetadata(partialResult, allResults, jsonLdMeta));
+    return withSchemaOrgAccess(
+      withMarkdown(composeMetadata(partialResult, allResults, jsonLdMeta))
+    );
   }
 
   logger.debug({ url }, 'All extraction strategies failed');
