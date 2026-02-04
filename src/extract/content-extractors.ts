@@ -370,6 +370,16 @@ interface SchemaOrgAccessInfo {
   declaredWordCount?: number;
 }
 
+/** Parse a schema.org wordCount value (number or numeric string) into a number. */
+function parseWordCount(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const num = parseInt(value, 10);
+    return isNaN(num) ? undefined : num;
+  }
+  return undefined;
+}
+
 /**
  * Read the schema.org `isAccessibleForFree` property from JSON-LD structured data
  * that publishers embed in their pages. Returns a result only when the field is
@@ -389,13 +399,6 @@ export function detectIsAccessibleForFree(document: Document): SchemaOrgAccessIn
     return { isAccessibleForFree: false, declaredWordCount };
   }
   return null;
-}
-
-/** Parse a schema.org wordCount value (number or numeric string) into a number. */
-function parseWordCount(value: unknown): number | undefined {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') return parseInt(value, 10) || undefined;
-  return undefined;
 }
 
 /**
@@ -1021,11 +1024,12 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   // Read publisher-declared schema.org access metadata from JSON-LD
   const schemaOrgAccess = detectIsAccessibleForFree(document);
 
-  /** Attach schema.org access fields to a result before returning. */
-  function withSchemaOrgAccess(result: ExtractionResult): ExtractionResult {
-    if (!schemaOrgAccess) return result;
+  /** Apply markdown conversion and attach schema.org access fields. */
+  function finalizeResult(result: ExtractionResult): ExtractionResult {
+    const md = withMarkdown(result);
+    if (!schemaOrgAccess) return md;
     return {
-      ...result,
+      ...md,
       isAccessibleForFree: schemaOrgAccess.isAccessibleForFree,
       declaredWordCount: schemaOrgAccess.declaredWordCount,
     };
@@ -1036,7 +1040,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     const nextDataResult = tryNextDataExtraction(document, url);
     if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'next-data' }, 'Extraction succeeded (Next.js data)');
-      return withSchemaOrgAccess(withMarkdown(nextDataResult!));
+      return finalizeResult(nextDataResult!);
     }
   }
 
@@ -1048,7 +1052,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
-      return withSchemaOrgAccess(withMarkdown(jsonLdResult!));
+      return finalizeResult(jsonLdResult!);
     }
   }
 
@@ -1128,7 +1132,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
       { url, method: winner.method, contentLen: winner.textContent?.length },
       'Extraction succeeded (preferred longest)'
     );
-    return withSchemaOrgAccess(withMarkdown(composeMetadata(winner, allResults, jsonLdMeta)));
+    return finalizeResult(composeMetadata(winner, allResults, jsonLdMeta));
   }
 
   // Fall back to minimum threshold candidates in priority order
@@ -1145,7 +1149,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   for (const [result, threshold] of fallbackCandidates) {
     if (meetsThreshold(result, threshold)) {
       logger.debug({ url, method: result!.method }, 'Extraction succeeded');
-      return withSchemaOrgAccess(withMarkdown(composeMetadata(result!, allResults, jsonLdMeta)));
+      return finalizeResult(composeMetadata(result!, allResults, jsonLdMeta));
     }
   }
 
@@ -1159,9 +1163,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     textDensityResult ??
     unfluffResult;
   if (partialResult) {
-    return withSchemaOrgAccess(
-      withMarkdown(composeMetadata(partialResult, allResults, jsonLdMeta))
-    );
+    return finalizeResult(composeMetadata(partialResult, allResults, jsonLdMeta));
   }
 
   logger.debug({ url }, 'All extraction strategies failed');
