@@ -841,6 +841,34 @@ describe('content-extractors', () => {
       expect(result!.declaredWordCount).toBe(900);
     });
 
+    it('handles wordCount of 0 without discarding it', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'NewsArticle',
+          headline: 'Zero Words',
+          isAccessibleForFree: false,
+          wordCount: 0,
+        })}</script></head><body></body></html>`
+      );
+      const result = detectIsAccessibleForFree(doc);
+      expect(result).not.toBeNull();
+      expect(result!.declaredWordCount).toBe(0);
+    });
+
+    it('handles wordCount of "0" string without discarding it', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'NewsArticle',
+          headline: 'Zero Words String',
+          isAccessibleForFree: false,
+          wordCount: '0',
+        })}</script></head><body></body></html>`
+      );
+      const result = detectIsAccessibleForFree(doc);
+      expect(result).not.toBeNull();
+      expect(result!.declaredWordCount).toBe(0);
+    });
+
     it('extractFromHtml attaches isAccessibleForFree to result', () => {
       const content = loremText(GOOD_CONTENT_LENGTH);
       const jsonLd = {
