@@ -651,6 +651,49 @@ describe('content-extractors', () => {
       expect(result!.method).toBe('next-rsc');
     });
 
+    it('extracts content from React Router hydration data', () => {
+      const longBody =
+        '<p>First paragraph of the article with enough content to pass the extraction threshold.</p>' +
+        '<p>Second paragraph continues with more detail about the topic at hand and its context.</p>' +
+        '<p>Third paragraph provides additional context and information for the reader to consider.</p>' +
+        '<p>Fourth paragraph wraps up with even more substantial content here for good measure.</p>' +
+        '<p>Fifth paragraph ensures we clearly exceed the five hundred character GOOD_CONTENT_LENGTH.</p>' +
+        '<p>Sixth paragraph adds even further material to make the text content long enough to pass.</p>';
+
+      const payload = {
+        loaderData: {
+          '1-0': {
+            content: {
+              asset: {
+                body: longBody,
+                headlines: { headline: 'Hydration Test' },
+                byline: 'Test Author',
+              },
+            },
+          },
+        },
+        actionData: null,
+        errors: null,
+      };
+      const escaped = JSON.stringify(JSON.stringify(payload));
+
+      const html = `<!DOCTYPE html><html lang="en"><head>
+        <title>Hydration Test</title>
+        <meta property="og:site_name" content="Test Site" />
+      </head><body>
+        <script>window.__staticRouterHydrationData = JSON.parse(${escaped});</script>
+        <p>Truncated content only.</p>
+      </body></html>`;
+
+      const result = extractFromHtml(html, 'https://example.com/test');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('react-router-hydration');
+      expect(result!.textContent).toContain('First paragraph');
+      expect(result!.title).toBe('Hydration Test');
+      expect(result!.markdown).toBeDefined();
+      expect(result!.markdown).toContain('First paragraph');
+    });
+
     it('returns null when all strategies fail', () => {
       const result = extractFromHtml('<html><body></body></html>', 'https://example.com/empty');
       expect(result).toBeNull();

@@ -16,6 +16,7 @@ import { htmlToMarkdown } from './markdown.js';
 import { meetsThreshold } from './utils.js';
 import { sitePreferJsonLd, siteUseNextData, getSiteNextDataPath } from '../sites/site-config.js';
 import { tryNuxtPayloadExtraction } from './nuxt-payload.js';
+import { tryReactRouterHydrationExtraction } from './react-router-hydration.js';
 import { logger } from '../logger.js';
 
 // Selectors for finding published time
@@ -1122,6 +1123,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   const unfluffResult = tryUnfluffExtraction(html, url);
   const rscResult = tryNextRscExtraction(html, url);
   const nuxtResult = tryNuxtPayloadExtraction(html, url);
+  const reactRouterResult = tryReactRouterHydrationExtraction(html, url, document);
 
   // Comparator: prefer text-density if it found significantly more content
   // than Readability (>2x length). Catches pages where Readability trims too aggressively.
@@ -1164,6 +1166,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     unfluffResult,
     rscResult,
     nuxtResult,
+    reactRouterResult,
   ];
 
   // Collect all results that meet the good content threshold
@@ -1171,6 +1174,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     effectiveReadability,
     rscResult,
     nuxtResult,
+    reactRouterResult,
     nextDataResult,
     jsonLdResult,
     textDensityResult,
@@ -1195,6 +1199,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     [effectiveReadability, MIN_CONTENT_LENGTH],
     [rscResult, MIN_CONTENT_LENGTH],
     [nuxtResult, MIN_CONTENT_LENGTH],
+    [reactRouterResult, MIN_CONTENT_LENGTH],
     [nextDataResult, MIN_CONTENT_LENGTH],
     [jsonLdResult, MIN_CONTENT_LENGTH],
     [selectorResult, MIN_CONTENT_LENGTH],
@@ -1214,6 +1219,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     effectiveReadability ??
     rscResult ??
     nuxtResult ??
+    reactRouterResult ??
     nextDataResult ??
     jsonLdResult ??
     selectorResult ??
