@@ -266,6 +266,25 @@ describe('parseArcAnsContent', () => {
     expect(result!.content).toContain('class="embed"');
   });
 
+  it('strips script, style, and iframe tags from output HTML', () => {
+    const ans = makeAnsResponse({
+      content_elements: [
+        { type: 'text', content: `<p>${filler(GOOD_CONTENT_LENGTH + 100)}</p>` },
+        { type: 'raw_html', content: '<script>alert("xss")</script><p>Safe content</p>' },
+        { type: 'raw_html', content: '<style>body{display:none}</style><p>More safe</p>' },
+        { type: 'raw_html', content: '<iframe src="https://evil.com"></iframe><p>Also safe</p>' },
+      ],
+    });
+    const result = parseArcAnsContent(ans);
+    expect(result).not.toBeNull();
+    expect(result!.content).not.toContain('<script');
+    expect(result!.content).not.toContain('<style');
+    expect(result!.content).not.toContain('<iframe');
+    expect(result!.content).toContain('Safe content');
+    expect(result!.content).toContain('More safe');
+    expect(result!.content).toContain('Also safe');
+  });
+
   it('handles list elements', () => {
     const ans = makeAnsResponse({
       content_elements: [

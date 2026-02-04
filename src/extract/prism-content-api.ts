@@ -8,6 +8,7 @@ import { parseHTML } from 'linkedom';
 import { htmlToMarkdown } from './markdown.js';
 import type { ExtractionResult } from './types.js';
 import { GOOD_CONTENT_LENGTH } from './types.js';
+import { logger } from '../logger.js';
 
 export interface PrismApiConfig {
   apiDomain: string;
@@ -40,7 +41,8 @@ export function detectPrismContentApi(html: string): PrismApiConfig | null {
     const website = typeof rawWebsite === 'string' && rawWebsite ? rawWebsite : null;
 
     return { apiDomain, contentSource, website };
-  } catch {
+  } catch (e) {
+    logger.debug({ error: String(e) }, 'Failed to detect Prism content API from __NEXT_DATA__');
     return null;
   }
 }
@@ -62,6 +64,20 @@ export function buildPrismContentApiUrl(config: PrismApiConfig, url: string): st
 function htmlToText(html: string): string {
   const { document } = parseHTML(`<div>${html}</div>`);
   return document.querySelector('div')?.textContent?.trim() ?? '';
+}
+
+/** Dangerous elements to strip from API-sourced HTML. */
+const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
+
+/** Remove script, style, and iframe elements from HTML to prevent XSS. */
+function sanitizeHtml(html: string): string {
+  const { document } = parseHTML(`<div>${html}</div>`);
+  for (const selector of DANGEROUS_SELECTORS) {
+    for (const el of document.querySelectorAll(selector)) {
+      el.remove();
+    }
+  }
+  return document.querySelector('div')?.innerHTML ?? html;
 }
 
 /**
@@ -133,8 +149,10 @@ export function parseArcAnsContent(json: unknown): ExtractionResult | null {
   const contentElements = data.content_elements as unknown[] | undefined;
   if (!Array.isArray(contentElements) || contentElements.length === 0) return null;
 
-  const converted = convertContentElements(contentElements);
-  if (!converted || converted.textContent.length < GOOD_CONTENT_LENGTH) return null;
+  const raw = convertContentElements(contentElements);
+  if (!raw || raw.textContent.length < GOOD_CONTENT_LENGTH) return null;
+
+  const sanitizedHtml = sanitizeHtml(raw.html);
 
   // Extract metadata
   const headlines = data.headlines as Record<string, unknown> | undefined;
@@ -157,13 +175,13 @@ export function parseArcAnsContent(json: unknown): ExtractionResult | null {
   return {
     title,
     byline,
-    content: converted.html,
-    textContent: converted.textContent,
+    content: sanitizedHtml,
+    textContent: raw.textContent,
     excerpt,
     siteName: null,
     publishedTime,
     lang: null,
-    markdown: htmlToMarkdown(converted.html),
+    markdown: htmlToMarkdown(sanitizedHtml),
     method: 'prism-content-api',
   };
 }
