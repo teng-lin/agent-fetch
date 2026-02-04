@@ -17,6 +17,11 @@ import {
   getSiteWpJsonApiPath,
   siteUseNextData,
 } from '../sites/site-config.js';
+import {
+  detectPrismContentApi,
+  buildPrismContentApiUrl,
+  parseArcAnsContent,
+} from '../extract/prism-content-api.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
 import type { ExtractionResult } from '../extract/types.js';
@@ -483,6 +488,56 @@ async function tryNextDataRoute(
 }
 
 /**
+ * Try fetching article content from a Prism content API endpoint.
+ * Returns an ExtractionResult if API returns sufficient content, null otherwise.
+ */
+async function tryPrismContentApiExtraction(
+  apiUrl: string,
+  preset?: string
+): Promise<ExtractionResult | null> {
+  try {
+    logger.info({ apiUrl }, 'Trying Prism content API extraction');
+
+    const response = await httpRequest(apiUrl, { Accept: 'application/json' }, preset);
+    if (!response.success || !response.html) return null;
+
+    return parseArcAnsContent(JSON.parse(response.html));
+  } catch (e) {
+    logger.debug({ apiUrl, error: String(e) }, 'Prism content API extraction failed');
+    return null;
+  }
+}
+
+/**
+ * Try Prism content API fallback and wrap the result into a FetchResult.
+ * Auto-detects Prism config from __NEXT_DATA__ and calls the content API.
+ * Returns a success FetchResult if API returns sufficient content, null otherwise.
+ */
+async function tryPrismContentApiFallback(
+  html: string,
+  url: string,
+  startTime: number,
+  response: { statusCode: number; html?: string },
+  preset: string | undefined
+): Promise<FetchResult | null> {
+  const config = detectPrismContentApi(html);
+  if (!config) return null;
+
+  const apiUrl = buildPrismContentApiUrl(config, url);
+  logger.debug({ url, apiUrl }, 'Detected Prism content API, trying extraction');
+
+  const result = await tryPrismContentApiExtraction(apiUrl, preset);
+  if (!result) return null;
+
+  logger.info({ url, apiUrl }, 'Recovered content from Prism content API');
+  return successResult(url, startTime, result, {
+    statusCode: response.statusCode,
+    rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
+    extractionMethod: 'prism-content-api',
+  });
+}
+
+/**
  * Build site-specific request headers (User-Agent, Referer) for a URL.
  */
 function buildSiteHeaders(url: string): Record<string, string> {
@@ -621,6 +676,15 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           preset
         );
         if (wpFallback) return wpFallback;
+
+        const prismFallback = await tryPrismContentApiFallback(
+          response.html,
+          url,
+          startTime,
+          response,
+          preset
+        );
+        if (prismFallback) return prismFallback;
       }
 
       return failResult(
@@ -649,6 +713,16 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         });
       }
     }
+
+    // Try Prism content API if available
+    const prismResult = await tryPrismContentApiFallback(
+      response.html,
+      url,
+      startTime,
+      response,
+      preset
+    );
+    if (prismResult) return prismResult;
 
     // Extract content using DOM-based strategies
     const extracted = extractFromHtml(response.html, url);
