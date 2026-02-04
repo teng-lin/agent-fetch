@@ -15,6 +15,7 @@ import {
   extractFromHtml,
   detectWpRestApi,
   extractNextBuildId,
+  detectIsAccessibleForFree,
 } from '../extract/content-extractors.js';
 import {
   MIN_CONTENT_LENGTH,
@@ -742,6 +743,88 @@ describe('content-extractors', () => {
       const html = `<html><head><script id="__NEXT_DATA__" type="application/json">{"props":{}}</script></head><body></body></html>`;
       const doc = makeDoc(html);
       expect(extractNextBuildId(doc)).toBeNull();
+    });
+  });
+
+  describe('detectIsAccessibleForFree', () => {
+    it('detects isAccessibleForFree: false (boolean) with wordCount', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'NewsArticle',
+          headline: 'Paywall Article',
+          isAccessibleForFree: false,
+          wordCount: 1500,
+        })}</script></head><body></body></html>`
+      );
+      const result = detectIsAccessibleForFree(doc);
+      expect(result).not.toBeNull();
+      expect(result!.isAccessibleForFree).toBe(false);
+      expect(result!.declaredWordCount).toBe(1500);
+    });
+
+    it('detects isAccessibleForFree: "False" (string, FT.com style)', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'Article',
+          headline: 'FT Article',
+          isAccessibleForFree: 'False',
+          wordCount: '2000',
+        })}</script></head><body></body></html>`
+      );
+      const result = detectIsAccessibleForFree(doc);
+      expect(result).not.toBeNull();
+      expect(result!.isAccessibleForFree).toBe(false);
+      expect(result!.declaredWordCount).toBe(2000);
+    });
+
+    it('returns null when isAccessibleForFree is true', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'Article',
+          headline: 'Free Article',
+          isAccessibleForFree: true,
+        })}</script></head><body></body></html>`
+      );
+      expect(detectIsAccessibleForFree(doc)).toBeNull();
+    });
+
+    it('returns null when isAccessibleForFree field is absent', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'NewsArticle',
+          headline: 'No Field',
+          articleBody: 'Some content',
+        })}</script></head><body></body></html>`
+      );
+      expect(detectIsAccessibleForFree(doc)).toBeNull();
+    });
+
+    it('returns null for non-article types', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'Product',
+          name: 'Widget',
+          isAccessibleForFree: false,
+        })}</script></head><body></body></html>`
+      );
+      expect(detectIsAccessibleForFree(doc)).toBeNull();
+    });
+
+    it('extractFromHtml attaches isAccessibleForFree to result', () => {
+      const content = loremText(GOOD_CONTENT_LENGTH);
+      const jsonLd = {
+        '@type': 'NewsArticle',
+        headline: 'Paywall Test',
+        isAccessibleForFree: false,
+        wordCount: 800,
+      };
+      const html = `<html><head>
+        <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
+      </head><body><article><p>${content}</p></article></body></html>`;
+      const result = extractFromHtml(html, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.isAccessibleForFree).toBe(false);
+      expect(result!.declaredWordCount).toBe(800);
     });
   });
 });

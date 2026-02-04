@@ -108,6 +108,11 @@ function successResult(
     publishedTime: extracted.publishedTime ?? undefined,
     lang: extracted.lang ?? undefined,
     markdown: extracted.markdown ?? undefined,
+    isAccessibleForFree: extracted.isAccessibleForFree,
+    declaredWordCount: extracted.declaredWordCount,
+    extractedWordCount: extracted.textContent
+      ? extracted.textContent.split(/\s+/).filter(Boolean).length
+      : undefined,
     ...extras,
   };
 }

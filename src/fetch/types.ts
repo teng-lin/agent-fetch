@@ -34,6 +34,9 @@ export interface FetchResult {
   publishedTime?: string;
   lang?: string;
   markdown?: string;
+  isAccessibleForFree?: boolean;
+  declaredWordCount?: number;
+  extractedWordCount?: number;
 
   // Error fields
   error?: string;

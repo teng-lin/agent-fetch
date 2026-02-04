@@ -19,4 +19,6 @@ export interface ExtractionResult {
   lang: string | null;
   markdown?: string | null;
   method: string;
+  isAccessibleForFree?: boolean;
+  declaredWordCount?: number;
 }

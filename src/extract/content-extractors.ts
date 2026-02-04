@@ -364,6 +364,40 @@ function extractJsonLdMetadata(document: Document): JsonLdMetadata | null {
   return null;
 }
 
+interface AccessibilityInfo {
+  isAccessibleForFree: boolean;
+  declaredWordCount?: number;
+}
+
+/**
+ * Detect the schema.org `isAccessibleForFree` field from JSON-LD structured data.
+ * Only reports when the field is explicitly `false` (content is paywalled).
+ * Handles boolean `false` and string variants like `"False"` (used by FT.com).
+ * Also extracts `wordCount` if present on the same item.
+ */
+export function detectIsAccessibleForFree(document: Document): AccessibilityInfo | null {
+  for (const item of parseJsonLdScripts(document)) {
+    if (!isArticleType(item)) continue;
+    if (!('isAccessibleForFree' in item)) continue;
+
+    const raw = item.isAccessibleForFree;
+    const isFree =
+      raw === true || (typeof raw === 'string' && raw.toLowerCase() === 'true') ? true : false;
+
+    if (isFree) return null;
+
+    const wordCount =
+      typeof item.wordCount === 'number'
+        ? item.wordCount
+        : typeof item.wordCount === 'string'
+          ? parseInt(item.wordCount, 10) || undefined
+          : undefined;
+
+    return { isAccessibleForFree: false, declaredWordCount: wordCount };
+  }
+  return null;
+}
+
 /**
  * Compose best metadata from multiple extraction results and JSON-LD metadata.
  * Supplements missing metadata fields on the winner from other sources.
@@ -984,12 +1018,25 @@ export function detectWpRestApi(document: Document, pageUrl: string): string | n
 export function extractFromHtml(html: string, url: string): ExtractionResult | null {
   const { document } = parseHTML(html);
 
+  // Detect paywall signal from JSON-LD (lightweight, runs before content extraction)
+  const accessibilityInfo = detectIsAccessibleForFree(document);
+
+  /** Attach isAccessibleForFree / declaredWordCount to a result before returning */
+  function withAccessibility(result: ExtractionResult): ExtractionResult {
+    if (!accessibilityInfo) return result;
+    return {
+      ...result,
+      isAccessibleForFree: accessibilityInfo.isAccessibleForFree,
+      declaredWordCount: accessibilityInfo.declaredWordCount,
+    };
+  }
+
   // Config-driven: Next.js early return (these sites have complete metadata)
   if (siteUseNextData(url)) {
     const nextDataResult = tryNextDataExtraction(document, url);
     if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'next-data' }, 'Extraction succeeded (Next.js data)');
-      return withMarkdown(nextDataResult!);
+      return withAccessibility(withMarkdown(nextDataResult!));
     }
   }
 
@@ -1001,7 +1048,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     jsonLdResult = tryJsonLdExtraction(document, url);
     if (meetsThreshold(jsonLdResult, GOOD_CONTENT_LENGTH)) {
       logger.debug({ url, method: 'json-ld' }, 'Extraction succeeded (preferred)');
-      return withMarkdown(jsonLdResult!);
+      return withAccessibility(withMarkdown(jsonLdResult!));
     }
   }
 
@@ -1075,7 +1122,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
       { url, method: winner.method, contentLen: winner.textContent?.length },
       'Extraction succeeded (preferred longest)'
     );
-    return withMarkdown(composeMetadata(winner, allResults, jsonLdMeta));
+    return withAccessibility(withMarkdown(composeMetadata(winner, allResults, jsonLdMeta)));
   }
 
   // Fall back to minimum threshold candidates in priority order
@@ -1091,7 +1138,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   for (const [result, threshold] of fallbackCandidates) {
     if (meetsThreshold(result, threshold)) {
       logger.debug({ url, method: result!.method }, 'Extraction succeeded');
-      return withMarkdown(composeMetadata(result!, allResults, jsonLdMeta));
+      return withAccessibility(withMarkdown(composeMetadata(result!, allResults, jsonLdMeta)));
     }
   }
 
@@ -1104,7 +1151,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     textDensityResult ??
     unfluffResult;
   if (partialResult) {
-    return withMarkdown(composeMetadata(partialResult, allResults, jsonLdMeta));
+    return withAccessibility(withMarkdown(composeMetadata(partialResult, allResults, jsonLdMeta)));
   }
 
   logger.debug({ url }, 'All extraction strategies failed');
