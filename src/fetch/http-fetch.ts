@@ -43,6 +43,12 @@ const BASE_RETRY_DELAY_MS = 1000;
  */
 const NEXT_DATA_ROUTE_THRESHOLD = 2000;
 
+/**
+ * When DOM extraction yields this many times more content than WP REST API,
+ * prefer the DOM content. Catches API responses that return only a teaser.
+ */
+const WP_DOM_COMPARATOR_RATIO = 2;
+
 /** Count whitespace-delimited words in a string. Returns undefined for empty/null input. */
 function countWords(text: string | null | undefined): number | undefined {
   if (!text) return undefined;
@@ -251,6 +257,15 @@ function resolveWpPost(raw: unknown): Record<string, unknown> | null {
 }
 
 /**
+ * Check if WP REST API content contains a teaser link added by WordPress
+ * when content is split at the <!--more--> tag. WordPress appends a tracking
+ * parameter (utm_campaign=api) to the "read more" link in API responses.
+ */
+function hasWpApiTruncationMarker(html: string): boolean {
+  return /href="[^"]*utm_campaign=api/.test(html);
+}
+
+/**
  * Try fetching article content from WordPress REST API.
  * Appends ?_embed to the URL to get author data in the response.
  * Detects PMC lists and fetches all list items for complete content.
@@ -295,6 +310,13 @@ async function tryWpRestApiExtraction(
 
     if (!contentHtml) return null;
 
+    // Reject content that contains a WordPress API teaser link, indicating the
+    // full article was not included in the API response.
+    if (hasWpApiTruncationMarker(contentHtml)) {
+      logger.debug({ apiUrl }, 'WP API returned teaser content, skipping');
+      return null;
+    }
+
     const textContent = htmlToText(contentHtml) ?? '';
     if (textContent.length < GOOD_CONTENT_LENGTH) return null;
 
@@ -324,6 +346,25 @@ async function tryWpRestApiExtraction(
     logger.debug({ apiUrl, error: String(e) }, 'WordPress REST API extraction failed');
     return null;
   }
+}
+
+/**
+ * Enrich a DOM extraction result with structured metadata from a WP REST API response.
+ * API metadata (title, byline, date, excerpt) is preferred when available since
+ * the REST API provides well-structured fields independent of page layout.
+ */
+function enrichWpMetadata(
+  domResult: ExtractionResult,
+  wpResult: ExtractionResult
+): ExtractionResult {
+  return {
+    ...domResult,
+    title: wpResult.title ?? domResult.title,
+    byline: wpResult.byline ?? domResult.byline,
+    excerpt: wpResult.excerpt ?? domResult.excerpt,
+    publishedTime: wpResult.publishedTime ?? domResult.publishedTime,
+    markdown: wpResult.markdown ?? domResult.markdown,
+  };
 }
 
 /**
@@ -714,6 +755,29 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     if (wpApiUrl) {
       const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, preset);
       if (wpResult) {
+        // Compare against DOM extraction to detect silently truncated API responses.
+        // Some WordPress sites serve only a teaser via their REST API while the
+        // full article is present in the rendered HTML.
+        const domResult = extractFromHtml(response.html, url);
+        const wpLen = wpResult.textContent?.length ?? 0;
+        const domLen = domResult?.textContent?.length ?? 0;
+
+        if (
+          domResult &&
+          domLen > wpLen * WP_DOM_COMPARATOR_RATIO &&
+          domLen >= GOOD_CONTENT_LENGTH
+        ) {
+          logger.info(
+            { url, apiUrl: wpApiUrl, wpApiLen: wpLen, domLen },
+            'DOM extraction found more content than WP API, enriching with API metadata'
+          );
+          return successResult(url, startTime, enrichWpMetadata(domResult, wpResult), {
+            statusCode: response.statusCode,
+            rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+            extractionMethod: domResult.method ?? null,
+          });
+        }
+
         logger.info({ url, apiUrl: wpApiUrl }, 'Extracted content from WP REST API');
         return successResult(url, startTime, wpResult, {
           statusCode: response.statusCode,

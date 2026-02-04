@@ -547,9 +547,10 @@ describe('WP REST API primary extraction', () => {
     vi.clearAllMocks();
   });
 
-  it('fetches from WP REST API first when detected', async () => {
+  it('prefers WP REST API when DOM content is similar length', async () => {
     const url = 'https://example.com/2024/01/article-slug/';
     const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+    const wpContent = 'Full article content. '.repeat(50);
 
     vi.mocked(httpRequest).mockResolvedValueOnce({
       success: true,
@@ -560,23 +561,34 @@ describe('WP REST API primary extraction', () => {
     });
 
     vi.mocked(quickValidate).mockReturnValue({ valid: true });
-
-    // detectWpRestApi finds the API URL
     vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
 
-    // Second httpRequest to WP API returns JSON
+    // WP API returns full content
     vi.mocked(httpRequest).mockResolvedValueOnce({
       success: true,
       statusCode: 200,
       html: JSON.stringify({
         title: { rendered: 'Full Article Title' },
-        content: { rendered: '<p>' + 'Full article content. '.repeat(50) + '</p>' },
+        content: { rendered: '<p>' + wpContent + '</p>' },
         excerpt: { rendered: '<p>Article excerpt</p>' },
         date_gmt: '2024-01-15T10:00:00',
         _embedded: { author: [{ name: 'John Doe' }] },
       }),
       headers: { 'content-type': 'application/json' },
       cookies: [],
+    });
+
+    // DOM extraction returns similar-length content (ratio < 2x)
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'DOM Title',
+      byline: null,
+      content: null,
+      textContent: wpContent + ' Some extra words.',
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
     });
 
     const result = await httpFetch(url);
@@ -586,10 +598,176 @@ describe('WP REST API primary extraction', () => {
     expect(result.byline).toBe('John Doe');
     expect(result.extractionMethod).toBe('wp-rest-api');
     expect(httpRequest).toHaveBeenCalledTimes(2);
-    // extractFromHtml should NOT be called when WP succeeds
-    expect(extractFromHtml).not.toHaveBeenCalled();
-    // Verify ?_embed was appended to the API URL
+    expect(extractFromHtml).toHaveBeenCalledTimes(1);
     expect(vi.mocked(httpRequest).mock.calls[1][0]).toContain('?_embed');
+  });
+
+  it('prefers DOM content when WP API returns significantly less content', async () => {
+    const url = 'https://example.com/2024/01/article-slug/';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/123';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: `<html><head><link rel="alternate" type="application/json" href="${apiUrl}" /></head><body>Full article here.</body></html>`,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    // WP API returns short teaser (no explicit truncation marker)
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'WP Title' },
+        content: { rendered: '<p>' + 'Short teaser text. '.repeat(30) + '</p>' },
+        excerpt: { rendered: '<p>Excerpt</p>' },
+        date_gmt: '2024-01-15T10:00:00',
+        _embedded: { author: [{ name: 'WP Author' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    // DOM extraction returns much more content (>2x WP API length)
+    const fullArticle = 'Full article paragraph. '.repeat(200);
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'DOM Title',
+      byline: 'DOM Author',
+      content: '<p>' + fullArticle + '</p>',
+      textContent: fullArticle,
+      excerpt: null,
+      siteName: 'Example Site',
+      publishedTime: null,
+      lang: 'en',
+      method: 'text-density',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    // WP API metadata is preferred
+    expect(result.title).toBe('WP Title');
+    expect(result.byline).toBe('WP Author');
+    expect(result.excerpt).toBe('Excerpt');
+    expect(result.publishedTime).toBe('2024-01-15T10:00:00');
+    // DOM content is used (longer)
+    expect(result.textContent).toBe(fullArticle);
+    expect(result.extractionMethod).toBe('text-density');
+  });
+
+  it('rejects WP API content with teaser tracking parameter', async () => {
+    const url = 'https://example.com/article';
+    const apiUrl = 'https://example.com/wp-json/wp/v2/posts/456';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: `<html><head><link rel="alternate" type="application/json" href="${apiUrl}" /></head><body>Full article</body></html>`,
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(detectWpRestApi).mockReturnValueOnce(apiUrl);
+
+    // WP API returns truncated content with utm_campaign=api link
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        title: { rendered: 'Article Title' },
+        content: {
+          rendered:
+            '<p>Teaser paragraph.</p><p><a href="https://example.com/article?utm_campaign=api">Read the rest…</a></p>',
+        },
+        excerpt: { rendered: '<p>Excerpt</p>' },
+        date_gmt: '2024-01-15T10:00:00',
+        _embedded: { author: [{ name: 'Author' }] },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    // Falls through to DOM extraction
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Article Title',
+      byline: null,
+      content: null,
+      textContent: 'Good content word. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.extractionMethod).toBe('readability');
+    // WP API was called but rejected; DOM extraction was used
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+    expect(extractFromHtml).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects WP API teaser in config-driven fast path', async () => {
+    const url = 'https://example-wp-site.com/2025/08/15/test-article/';
+
+    vi.mocked(siteUseWpRestApi).mockReturnValueOnce(true);
+
+    // WP API returns truncated content with utm_campaign=api
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify([
+        {
+          title: { rendered: 'Article Title' },
+          content: {
+            rendered:
+              '<p>Teaser only.</p><p><a href="https://example-wp-site.com/test?utm_campaign=api">Read the rest…</a></p>',
+          },
+          excerpt: { rendered: '<p>Excerpt</p>' },
+          date_gmt: '2025-08-15T10:00:00',
+          _embedded: { author: [{ name: 'Author' }] },
+        },
+      ]),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    // Falls back to HTML fetch
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Full article content here</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    vi.mocked(extractFromHtml).mockReturnValueOnce({
+      title: 'Article Title',
+      byline: null,
+      content: null,
+      textContent: 'Full article content. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.extractionMethod).toBe('readability');
+    // First call: WP API (rejected), second call: HTML fetch
+    expect(httpRequest).toHaveBeenCalledTimes(2);
   });
 
   it('skips WP REST API when not detected', async () => {
