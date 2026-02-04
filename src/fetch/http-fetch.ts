@@ -8,6 +8,7 @@ import {
   extractFromHtml,
   detectWpRestApi,
   tryNextDataExtraction,
+  extractNextBuildId,
 } from '../extract/content-extractors.js';
 import {
   getSiteUserAgent,
@@ -404,6 +405,79 @@ function tryNextDataFallback(
 }
 
 /**
+ * Construct the Next.js data route URL from a buildId and page URL.
+ * Example: buildId="abc", url="https://example.com/section/slug"
+ *   => "https://example.com/_next/data/abc/section/slug.json"
+ */
+function buildNextDataRouteUrl(url: string, buildId: string): string {
+  const parsed = new URL(url);
+  const pathname = parsed.pathname.replace(/\/$/, '') || '/index';
+  return `${parsed.origin}/_next/data/${buildId}${pathname}.json`;
+}
+
+/**
+ * Try fetching full content from the Next.js /_next/data/ route.
+ * This route sometimes returns richer content than the SSR HTML.
+ * Returns a success FetchResult if the data route yields more content, null otherwise.
+ */
+async function tryNextDataRoute(
+  html: string,
+  url: string,
+  startTime: number,
+  response: { statusCode: number; html?: string },
+  domExtracted: ExtractionResult | null,
+  preset: string | undefined
+): Promise<FetchResult | null> {
+  const { document } = parseHTML(html);
+  const buildId = extractNextBuildId(document);
+  if (!buildId) return null;
+
+  const dataRouteUrl = buildNextDataRouteUrl(url, buildId);
+
+  try {
+    logger.debug({ url, dataRouteUrl }, 'Trying Next.js data route');
+
+    const dataResponse = await httpRequest(dataRouteUrl, { Accept: 'application/json' }, preset);
+    if (!dataResponse.success || !dataResponse.html) return null;
+
+    // Parse the JSON response
+    let pageProps: unknown;
+    try {
+      const json = JSON.parse(dataResponse.html);
+      pageProps = json.pageProps;
+      if (!pageProps) return null;
+    } catch {
+      return null;
+    }
+
+    // Build a synthetic __NEXT_DATA__ document so tryNextDataExtraction can process it
+    const syntheticHtml = `<html><head><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ buildId, props: { pageProps } })}</script></head><body></body></html>`;
+    const { document: syntheticDoc } = parseHTML(syntheticHtml);
+
+    const result = tryNextDataExtraction(syntheticDoc, url);
+    if (!result || !result.textContent) return null;
+
+    // Only use data route result if it has more content than DOM extraction
+    const domLen = domExtracted?.textContent?.length ?? 0;
+    if (result.textContent.length <= domLen) return null;
+
+    logger.info(
+      { url, dataRouteUrl, dataLen: result.textContent.length, domLen },
+      'Next.js data route returned more content'
+    );
+
+    return successResult(url, startTime, result, {
+      statusCode: response.statusCode,
+      rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
+      extractionMethod: 'next-data-route',
+    });
+  } catch (e) {
+    logger.debug({ url, dataRouteUrl, error: String(e) }, 'Next.js data route failed');
+    return null;
+  }
+}
+
+/**
  * Build site-specific request headers (User-Agent, Referer) for a URL.
  */
 function buildSiteHeaders(url: string): Record<string, string> {
@@ -602,6 +676,19 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         },
         response.statusCode
       );
+    }
+
+    // Try Next.js data route when DOM extraction succeeded but content is short
+    if (extracted.textContent && extracted.textContent.length < GOOD_CONTENT_LENGTH) {
+      const dataRouteResult = await tryNextDataRoute(
+        response.html,
+        url,
+        startTime,
+        response,
+        extracted,
+        preset
+      );
+      if (dataRouteResult) return dataRouteResult;
     }
 
     const latencyMs = Date.now() - startTime;

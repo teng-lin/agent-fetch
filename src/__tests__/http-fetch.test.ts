@@ -15,6 +15,7 @@ vi.mock('../extract/content-extractors.js', () => ({
   extractFromHtml: vi.fn(),
   detectWpRestApi: vi.fn().mockReturnValue(null),
   tryNextDataExtraction: vi.fn().mockReturnValue(null),
+  extractNextBuildId: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../sites/site-config.js', () => ({
@@ -36,7 +37,11 @@ vi.mock('../logger.js', () => ({
 
 import { httpRequest } from '../fetch/http-client.js';
 import { quickValidate } from '../fetch/content-validator.js';
-import { extractFromHtml, detectWpRestApi } from '../extract/content-extractors.js';
+import {
+  extractFromHtml,
+  detectWpRestApi,
+  extractNextBuildId,
+} from '../extract/content-extractors.js';
 import {
   getSiteUserAgent,
   getSiteReferer,
@@ -791,5 +796,187 @@ describe('WP REST API primary extraction', () => {
     // Verify the constructed API URL uses standard WP path + slug
     const apiCall = vi.mocked(httpRequest).mock.calls[0][0];
     expect(apiCall).toContain('/wp-json/wp/v2/posts?slug=test-article');
+  });
+});
+
+describe('Next.js data route fallback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('tries /_next/data/ route when extraction yields short content on a Next.js page', async () => {
+    const url = 'https://example.com/section/2026/01/28/article-slug';
+
+    // Initial page fetch
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Short teaser</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+
+    // DOM extraction returns short content (above MIN_CONTENT_LENGTH=100 but below GOOD_CONTENT_LENGTH=500)
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Article Title',
+      byline: null,
+      content: '<p>Short teaser</p>',
+      textContent: 'Short teaser. '.repeat(10),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'text-density',
+    });
+
+    // __NEXT_DATA__ detected with buildId
+    vi.mocked(extractNextBuildId).mockReturnValue('test-build-id');
+
+    // tryNextDataExtraction will be called on the synthetic doc from the data route response
+    const { tryNextDataExtraction } = await import('../extract/content-extractors.js');
+    vi.mocked(tryNextDataExtraction).mockReturnValue({
+      title: 'Full Article Title',
+      byline: 'Author Name',
+      content: 'Full article content. '.repeat(100),
+      textContent: 'Full article content. '.repeat(100),
+      excerpt: 'Full article excerpt',
+      siteName: 'Example Site',
+      publishedTime: '2026-01-28',
+      lang: 'en',
+      method: 'next-data',
+    });
+
+    // Data route fetch returns JSON
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: JSON.stringify({
+        pageProps: {
+          content: {
+            body: [{ type: 'PARAGRAPH', text: 'Full article content. '.repeat(100) }],
+            headline: 'Full Article Title',
+          },
+        },
+      }),
+      headers: { 'content-type': 'application/json' },
+      cookies: [],
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.extractionMethod).toBe('next-data-route');
+    expect(result.textContent!.length).toBeGreaterThan(500);
+    const dataRouteCall = vi.mocked(httpRequest).mock.calls[1][0];
+    expect(dataRouteCall).toContain(
+      '/_next/data/test-build-id/section/2026/01/28/article-slug.json'
+    );
+  });
+
+  it('skips data route when page has no __NEXT_DATA__', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Short content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Short content. '.repeat(10),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    vi.mocked(extractNextBuildId).mockReturnValue(null);
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps DOM result when data route fetch fails', async () => {
+    const url = 'https://example.com/section/2026/01/28/article-slug';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Short teaser</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'DOM Title',
+      byline: null,
+      content: null,
+      textContent: 'DOM content. '.repeat(10),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    vi.mocked(extractNextBuildId).mockReturnValue('build-id');
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: false,
+      statusCode: 404,
+      headers: {},
+      cookies: [],
+      error: 'not_found',
+    });
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(result.title).toBe('DOM Title');
+    expect(result.extractionMethod).toBe('readability');
+  });
+
+  it('skips data route when DOM extraction already has good content', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValueOnce({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Full article</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'Good content word. '.repeat(150),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+
+    vi.mocked(extractNextBuildId).mockReturnValue('some-build-id');
+
+    const result = await httpFetch(url);
+
+    expect(result.success).toBe(true);
+    expect(httpRequest).toHaveBeenCalledTimes(1);
   });
 });
