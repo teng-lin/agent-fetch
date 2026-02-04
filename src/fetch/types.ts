@@ -34,6 +34,8 @@ export interface FetchResult {
   publishedTime?: string;
   lang?: string;
   markdown?: string;
+
+  // Schema.org access metadata (from publisher-embedded JSON-LD)
   isAccessibleForFree?: boolean;
   declaredWordCount?: number;
   extractedWordCount?: number;

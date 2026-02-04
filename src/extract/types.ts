@@ -19,6 +19,8 @@ export interface ExtractionResult {
   lang: string | null;
   markdown?: string | null;
   method: string;
+
+  // Schema.org access metadata (from publisher-embedded JSON-LD)
   isAccessibleForFree?: boolean;
   declaredWordCount?: number;
 }

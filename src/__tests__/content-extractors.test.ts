@@ -751,7 +751,7 @@ describe('content-extractors', () => {
       const doc = makeDoc(
         `<html><head><script type="application/ld+json">${JSON.stringify({
           '@type': 'NewsArticle',
-          headline: 'Paywall Article',
+          headline: 'Restricted Article',
           isAccessibleForFree: false,
           wordCount: 1500,
         })}</script></head><body></body></html>`
@@ -762,11 +762,11 @@ describe('content-extractors', () => {
       expect(result!.declaredWordCount).toBe(1500);
     });
 
-    it('detects isAccessibleForFree: "False" (string, FT.com style)', () => {
+    it('detects isAccessibleForFree: "False" (string variant)', () => {
       const doc = makeDoc(
         `<html><head><script type="application/ld+json">${JSON.stringify({
           '@type': 'Article',
-          headline: 'FT Article',
+          headline: 'String False Article',
           isAccessibleForFree: 'False',
           wordCount: '2000',
         })}</script></head><body></body></html>`
@@ -783,6 +783,17 @@ describe('content-extractors', () => {
           '@type': 'Article',
           headline: 'Free Article',
           isAccessibleForFree: true,
+        })}</script></head><body></body></html>`
+      );
+      expect(detectIsAccessibleForFree(doc)).toBeNull();
+    });
+
+    it('returns null when isAccessibleForFree is string "true"', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@type': 'Article',
+          headline: 'Free Article',
+          isAccessibleForFree: 'true',
         })}</script></head><body></body></html>`
       );
       expect(detectIsAccessibleForFree(doc)).toBeNull();
@@ -810,11 +821,31 @@ describe('content-extractors', () => {
       expect(detectIsAccessibleForFree(doc)).toBeNull();
     });
 
+    it('finds article inside @graph array', () => {
+      const doc = makeDoc(
+        `<html><head><script type="application/ld+json">${JSON.stringify({
+          '@graph': [
+            { '@type': 'WebSite', name: 'Example' },
+            {
+              '@type': 'NewsArticle',
+              headline: 'Graph Article',
+              isAccessibleForFree: false,
+              wordCount: 900,
+            },
+          ],
+        })}</script></head><body></body></html>`
+      );
+      const result = detectIsAccessibleForFree(doc);
+      expect(result).not.toBeNull();
+      expect(result!.isAccessibleForFree).toBe(false);
+      expect(result!.declaredWordCount).toBe(900);
+    });
+
     it('extractFromHtml attaches isAccessibleForFree to result', () => {
       const content = loremText(GOOD_CONTENT_LENGTH);
       const jsonLd = {
         '@type': 'NewsArticle',
-        headline: 'Paywall Test',
+        headline: 'Access Metadata Test',
         isAccessibleForFree: false,
         wordCount: 800,
       };
