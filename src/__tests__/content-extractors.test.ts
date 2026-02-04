@@ -14,6 +14,7 @@ import {
   tryNextRscExtraction,
   extractFromHtml,
   detectWpRestApi,
+  extractNextBuildId,
 } from '../extract/content-extractors.js';
 import {
   MIN_CONTENT_LENGTH,
@@ -722,6 +723,25 @@ describe('content-extractors', () => {
         <link rel="alternate" type="application/json" href="http://169.254.169.254/wp-json/latest/meta-data" />
       </head><body></body></html>`);
       expect(detectWpRestApi(doc, pageUrl)).toBeNull();
+    });
+  });
+
+  describe('extractNextBuildId', () => {
+    it('extracts buildId from __NEXT_DATA__ script', () => {
+      const html = `<html><head><script id="__NEXT_DATA__" type="application/json">{"buildId":"abc123","props":{}}</script></head><body></body></html>`;
+      const doc = makeDoc(html);
+      expect(extractNextBuildId(doc)).toBe('abc123');
+    });
+
+    it('returns null when no __NEXT_DATA__ script exists', () => {
+      const doc = makeDoc('<html><body></body></html>');
+      expect(extractNextBuildId(doc)).toBeNull();
+    });
+
+    it('returns null when __NEXT_DATA__ has no buildId', () => {
+      const html = `<html><head><script id="__NEXT_DATA__" type="application/json">{"props":{}}</script></head><body></body></html>`;
+      const doc = makeDoc(html);
+      expect(extractNextBuildId(doc)).toBeNull();
     });
   });
 });

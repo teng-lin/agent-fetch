@@ -940,6 +940,22 @@ export function tryNextRscExtraction(html: string, url: string): ExtractionResul
 }
 
 /**
+ * Extract the Next.js buildId from a __NEXT_DATA__ script tag.
+ * Returns null if the page is not a Next.js page or has no buildId.
+ */
+export function extractNextBuildId(document: Document): string | null {
+  try {
+    const script = document.querySelector('script#__NEXT_DATA__');
+    if (!script?.textContent) return null;
+    const data = JSON.parse(script.textContent);
+    const buildId = data?.buildId;
+    return typeof buildId === 'string' && buildId.length > 0 ? buildId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Detect WordPress REST API availability from HTML.
  * WordPress sites with the REST API enabled include a link tag like:
  *   <link rel="alternate" type="application/json" href="/wp-json/wp/v2/posts/123" />
