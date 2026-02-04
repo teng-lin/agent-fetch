@@ -678,8 +678,11 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       );
     }
 
-    // Try Next.js data route when DOM extraction succeeded but content is short
-    if (extracted.textContent && extracted.textContent.length < GOOD_CONTENT_LENGTH) {
+    // Try Next.js data route when DOM extraction succeeded but content is short.
+    // Use a higher threshold than GOOD_CONTENT_LENGTH since DOM extraction may return
+    // teasers that are above the minimum but still far from the full article.
+    const NEXT_DATA_ROUTE_THRESHOLD = 2000;
+    if (extracted.textContent && extracted.textContent.length < NEXT_DATA_ROUTE_THRESHOLD) {
       const dataRouteResult = await tryNextDataRoute(
         response.html,
         url,
