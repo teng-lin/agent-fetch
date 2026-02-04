@@ -949,7 +949,7 @@ export function extractNextBuildId(document: Document): string | null {
     if (!script?.textContent) return null;
     const data = JSON.parse(script.textContent);
     const buildId = data?.buildId;
-    return typeof buildId === 'string' && buildId.length > 0 ? buildId : null;
+    return typeof buildId === 'string' && /^[\w-]+$/.test(buildId) ? buildId : null;
   } catch {
     return null;
   }

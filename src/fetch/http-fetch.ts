@@ -31,6 +31,13 @@ const MIN_CONTENT_LENGTH = 100;
 const MAX_RETRIES = 2;
 const BASE_RETRY_DELAY_MS = 1000;
 
+/**
+ * Threshold (chars) below which DOM-extracted content triggers a Next.js data route probe.
+ * Higher than GOOD_CONTENT_LENGTH since DOM extraction may capture teasers that pass
+ * the minimum threshold but are still far shorter than the full article.
+ */
+const NEXT_DATA_ROUTE_THRESHOLD = 2000;
+
 /** Check if an error is a security error that should not be retried. */
 function isSecurityError(error: string | undefined): boolean {
   return error?.includes('SSRF protection') ?? false;
@@ -440,18 +447,16 @@ async function tryNextDataRoute(
     const dataResponse = await httpRequest(dataRouteUrl, { Accept: 'application/json' }, preset);
     if (!dataResponse.success || !dataResponse.html) return null;
 
-    // Parse the JSON response
-    let pageProps: unknown;
-    try {
-      const json = JSON.parse(dataResponse.html);
-      pageProps = json.pageProps;
-      if (!pageProps) return null;
-    } catch {
-      return null;
-    }
+    const json = JSON.parse(dataResponse.html);
+    const pageProps = json.pageProps;
+    if (!pageProps) return null;
 
     // Build a synthetic __NEXT_DATA__ document so tryNextDataExtraction can process it
-    const syntheticHtml = `<html><head><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ buildId, props: { pageProps } })}</script></head><body></body></html>`;
+    const syntheticData = JSON.stringify({ buildId, props: { pageProps } }).replace(
+      /</g,
+      '\\u003c'
+    );
+    const syntheticHtml = `<html><head><script id="__NEXT_DATA__" type="application/json">${syntheticData}</script></head><body></body></html>`;
     const { document: syntheticDoc } = parseHTML(syntheticHtml);
 
     const result = tryNextDataExtraction(syntheticDoc, url);
@@ -678,10 +683,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       );
     }
 
-    // Try Next.js data route when DOM extraction succeeded but content is short.
-    // Use a higher threshold than GOOD_CONTENT_LENGTH since DOM extraction may return
-    // teasers that are above the minimum but still far from the full article.
-    const NEXT_DATA_ROUTE_THRESHOLD = 2000;
+    // Try Next.js data route when DOM extraction succeeded but content is short
     if (extracted.textContent && extracted.textContent.length < NEXT_DATA_ROUTE_THRESHOLD) {
       const dataRouteResult = await tryNextDataRoute(
         response.html,
