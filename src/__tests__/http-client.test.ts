@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGet = vi.fn();
+const mockPost = vi.fn();
 const mockClose = vi.fn();
 let mockSessionConstructor: (() => void) | undefined;
 
@@ -24,6 +25,7 @@ vi.mock('httpcloak', () => ({
   default: {
     Session: class MockSession {
       get = mockGet;
+      post = mockPost;
       close = mockClose;
       constructor() {
         if (mockSessionConstructor) mockSessionConstructor();
@@ -36,7 +38,13 @@ vi.mock('httpcloak', () => ({
   },
 }));
 
-import { validateSSRF, getSession, closeAllSessions, httpRequest } from '../fetch/http-client.js';
+import {
+  validateSSRF,
+  getSession,
+  closeAllSessions,
+  httpRequest,
+  httpPost,
+} from '../fetch/http-client.js';
 import { promises as dns } from 'dns';
 
 afterEach(() => {
@@ -380,6 +388,93 @@ describe('fetch/http-client', () => {
       const result = await resultPromise;
       expect(result.success).toBe(false);
       expect(result.error).toContain('DNS resolution timed out');
+    });
+  });
+
+  describe('httpPost', () => {
+    beforeEach(() => {
+      mockDnsIPv4Only('93.184.216.34');
+    });
+
+    it('returns successful POST response', async () => {
+      mockPost.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '{"success":true,"data":"<p>Article content</p>"}',
+        headers: { 'content-type': 'application/json' },
+        cookies: [],
+      });
+
+      const result = await httpPost('https://example.com/wp-admin/admin-ajax.php', {
+        action: 'fetch_article_content',
+        'data[id]': 'abc-123',
+      });
+      expect(result.success).toBe(true);
+      expect(result.statusCode).toBe(200);
+      expect(result.html).toBe('{"success":true,"data":"<p>Article content</p>"}');
+    });
+
+    it('passes form data and Content-Type header to session.post', async () => {
+      mockPost.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: 'OK',
+        headers: {},
+        cookies: [],
+      });
+
+      await httpPost('https://example.com/wp-admin/admin-ajax.php', {
+        action: 'fetch_content',
+        'data[id]': 'uuid-here',
+      });
+
+      expect(mockPost).toHaveBeenCalledWith('https://example.com/wp-admin/admin-ajax.php', {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: { action: 'fetch_content', 'data[id]': 'uuid-here' },
+      });
+    });
+
+    it('merges custom headers with Content-Type', async () => {
+      mockPost.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: 'OK',
+        headers: {},
+        cookies: [],
+      });
+
+      await httpPost(
+        'https://example.com/wp-admin/admin-ajax.php',
+        { action: 'test' },
+        { 'X-Custom': 'value' }
+      );
+
+      expect(mockPost).toHaveBeenCalledWith('https://example.com/wp-admin/admin-ajax.php', {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Custom': 'value',
+        },
+        body: { action: 'test' },
+      });
+    });
+
+    it('rejects SSRF attempts on POST', async () => {
+      mockDnsIPv4Only('127.0.0.1');
+      const result = await httpPost('https://example.com/wp-admin/admin-ajax.php', {
+        action: 'test',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('SSRF protection');
+    });
+
+    it('handles POST errors gracefully', async () => {
+      mockPost.mockRejectedValue(new Error('Connection refused'));
+
+      const result = await httpPost('https://example.com/wp-admin/admin-ajax.php', {
+        action: 'test',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Connection refused');
     });
   });
 });

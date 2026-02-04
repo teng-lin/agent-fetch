@@ -2,7 +2,7 @@
  * HTTP fetch logic - fast extraction with proper error handling
  */
 import httpcloak from 'httpcloak';
-import { httpRequest, type HttpResponse } from './http-client.js';
+import { httpRequest, httpPost, type HttpResponse } from './http-client.js';
 import { quickValidate } from './content-validator.js';
 import {
   extractFromHtml,
@@ -22,6 +22,7 @@ import {
   buildPrismContentApiUrl,
   parseArcAnsContent,
 } from '../extract/prism-content-api.js';
+import { detectWpAjaxContent, parseWpAjaxResponse } from '../extract/wp-ajax-content.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
 import type { ExtractionResult } from '../extract/types.js';
@@ -588,6 +589,67 @@ async function tryPrismContentApiFallback(
 }
 
 /**
+ * Try WP AJAX content fallback via admin-ajax.php POST.
+ * Detects WP AJAX content patterns and fetches full article content.
+ * Enriches result with metadata from DOM extraction when available.
+ */
+async function tryWpAjaxContentFallback(
+  html: string,
+  url: string,
+  startTime: number,
+  response: { statusCode: number; html?: string },
+  domExtracted: ExtractionResult | null,
+  preset: string | undefined
+): Promise<FetchResult | null> {
+  const config = detectWpAjaxContent(html, url);
+  if (!config) return null;
+
+  logger.debug(
+    { url, ajaxUrl: config.ajaxUrl, action: config.action },
+    'Detected WP AJAX content pattern, trying extraction'
+  );
+
+  try {
+    const ajaxResponse = await httpPost(
+      config.ajaxUrl,
+      { action: config.action, 'data[id]': config.articleId },
+      undefined,
+      preset
+    );
+
+    if (!ajaxResponse.success || !ajaxResponse.html) return null;
+
+    const parsed = parseWpAjaxResponse(ajaxResponse.html, url);
+    if (!parsed) return null;
+
+    // Enrich with metadata from DOM extraction (title, byline, Schema.org, etc.)
+    const result = domExtracted
+      ? {
+          ...parsed,
+          title: parsed.title ?? domExtracted.title,
+          byline: parsed.byline ?? domExtracted.byline,
+          excerpt: parsed.excerpt ?? domExtracted.excerpt,
+          siteName: parsed.siteName ?? domExtracted.siteName,
+          publishedTime: parsed.publishedTime ?? domExtracted.publishedTime,
+          lang: parsed.lang ?? domExtracted.lang,
+          isAccessibleForFree: parsed.isAccessibleForFree ?? domExtracted.isAccessibleForFree,
+          declaredWordCount: parsed.declaredWordCount ?? domExtracted.declaredWordCount,
+        }
+      : parsed;
+
+    logger.info({ url, ajaxUrl: config.ajaxUrl }, 'Recovered content from WP AJAX endpoint');
+    return successResult(url, startTime, result, {
+      statusCode: response.statusCode,
+      rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
+      extractionMethod: 'wp-ajax-content',
+    });
+  } catch (e) {
+    logger.debug({ url, error: String(e) }, 'WP AJAX content fallback failed');
+    return null;
+  }
+}
+
+/**
  * Build site-specific request headers (User-Agent, Referer) for a URL.
  */
 function buildSiteHeaders(url: string): Record<string, string> {
@@ -735,6 +797,16 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           preset
         );
         if (prismFallback) return prismFallback;
+
+        const wpAjaxFallback = await tryWpAjaxContentFallback(
+          response.html,
+          url,
+          startTime,
+          response,
+          null,
+          preset
+        );
+        if (wpAjaxFallback) return wpAjaxFallback;
       }
 
       return failResult(
@@ -816,6 +888,17 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
 
     // Handle insufficient extracted content
     if (!extracted.textContent || extracted.textContent.trim().length < MIN_CONTENT_LENGTH) {
+      // Try WP AJAX fallback before giving up
+      const wpAjaxResult = await tryWpAjaxContentFallback(
+        response.html,
+        url,
+        startTime,
+        response,
+        extracted,
+        preset
+      );
+      if (wpAjaxResult) return wpAjaxResult;
+
       const wordCount = extracted.textContent ? extracted.textContent.split(/\s+/).length : 0;
       return failResult(
         url,

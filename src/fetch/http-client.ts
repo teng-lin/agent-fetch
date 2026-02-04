@@ -292,12 +292,15 @@ export interface HttpResponse {
 }
 
 /**
- * Make HTTP request with browser-perfect fingerprint.
+ * Internal HTTP request handler shared by httpRequest() and httpPost().
+ * Handles SSRF validation, session management, timeout, response parsing, and size limits.
  */
-export async function httpRequest(
+async function httpRequestInternal(
+  method: 'GET' | 'POST',
   url: string,
-  headers: Record<string, string> = {},
-  preset?: string
+  headers: Record<string, string>,
+  body: Record<string, string> | undefined,
+  preset: string | undefined
 ): Promise<HttpResponse> {
   let sessionMetadata: SessionMetadata | undefined;
   const cacheKey = String(preset ?? DEFAULT_PRESET);
@@ -311,9 +314,9 @@ export async function httpRequest(
     const session = await getSession(preset);
     sessionMetadata = sessionCache.get(cacheKey);
 
-    logger.debug({ url, headers }, 'Making httpcloak request');
+    logger.debug({ url, method, headers }, 'Making httpcloak request');
 
-    // Wrap session.get() with timeout to prevent indefinite hangs
+    // Wrap session call with timeout to prevent indefinite hangs
     let timeoutId: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
@@ -323,7 +326,10 @@ export async function httpRequest(
     });
 
     try {
-      const response = await Promise.race([session.get(url, headers), timeoutPromise]);
+      const requestPromise =
+        method === 'POST' ? session.post(url, { headers, body }) : session.get(url, headers);
+
+      const response = await Promise.race([requestPromise, timeoutPromise]);
 
       // DNS rebinding protection: re-validate SSRF after connection
       // This catches attacks where DNS resolves to a private IP after the initial check.
@@ -429,4 +435,37 @@ export async function httpRequest(
       sessionMetadata.inFlightRequests--;
     }
   }
+}
+
+/**
+ * Make HTTP GET request with browser-perfect fingerprint.
+ */
+export async function httpRequest(
+  url: string,
+  headers: Record<string, string> = {},
+  preset?: string
+): Promise<HttpResponse> {
+  return httpRequestInternal('GET', url, headers, undefined, preset);
+}
+
+/**
+ * Make HTTP POST request with browser-perfect fingerprint.
+ * Form data is sent as application/x-www-form-urlencoded.
+ */
+export async function httpPost(
+  url: string,
+  formData: Record<string, string>,
+  headers?: Record<string, string>,
+  preset?: string
+): Promise<HttpResponse> {
+  return httpRequestInternal(
+    'POST',
+    url,
+    {
+      ...(headers || {}),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    formData,
+    preset
+  );
 }

@@ -2,7 +2,7 @@
  * agent-fetch - Full-content web fetcher and article extractor for AI agents
  */
 export { httpFetch, resolvePreset } from './fetch/index.js';
-export { httpRequest, getSession, closeAllSessions } from './fetch/http-client.js';
+export { httpRequest, httpPost, getSession, closeAllSessions } from './fetch/http-client.js';
 export { quickValidate } from './fetch/content-validator.js';
 export {
   extractFromHtml,
