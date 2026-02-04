@@ -15,6 +15,7 @@ import {
 import { htmlToMarkdown } from './markdown.js';
 import { meetsThreshold } from './utils.js';
 import { sitePreferJsonLd, siteUseNextData, getSiteNextDataPath } from '../sites/site-config.js';
+import { tryNuxtPayloadExtraction } from './nuxt-payload.js';
 import { logger } from '../logger.js';
 
 // Selectors for finding published time
@@ -1063,6 +1064,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   const textDensityResult = tryTextDensityExtraction(html, url);
   const unfluffResult = tryUnfluffExtraction(html, url);
   const rscResult = tryNextRscExtraction(html, url);
+  const nuxtResult = tryNuxtPayloadExtraction(html, url);
 
   // Comparator: prefer text-density if it found significantly more content
   // than Readability (>2x length). Catches pages where Readability trims too aggressively.
@@ -1103,12 +1105,17 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     textDensityResult,
     unfluffResult,
     rscResult,
+    nuxtResult,
   ];
 
   // Collect all results that meet the good content threshold
-  const goodCandidates = [effectiveReadability, rscResult, jsonLdResult, textDensityResult].filter(
-    (r): r is ExtractionResult => meetsThreshold(r, GOOD_CONTENT_LENGTH)
-  );
+  const goodCandidates = [
+    effectiveReadability,
+    rscResult,
+    nuxtResult,
+    jsonLdResult,
+    textDensityResult,
+  ].filter((r): r is ExtractionResult => meetsThreshold(r, GOOD_CONTENT_LENGTH));
 
   // If multiple strategies meet the threshold, prefer the one with the most content
   if (goodCandidates.length > 0) {
@@ -1128,6 +1135,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   const fallbackCandidates: [ExtractionResult | null, number][] = [
     [effectiveReadability, MIN_CONTENT_LENGTH],
     [rscResult, MIN_CONTENT_LENGTH],
+    [nuxtResult, MIN_CONTENT_LENGTH],
     [jsonLdResult, MIN_CONTENT_LENGTH],
     [selectorResult, MIN_CONTENT_LENGTH],
     [textDensityResult, MIN_CONTENT_LENGTH],
@@ -1145,6 +1153,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   const partialResult =
     effectiveReadability ??
     rscResult ??
+    nuxtResult ??
     jsonLdResult ??
     selectorResult ??
     textDensityResult ??
