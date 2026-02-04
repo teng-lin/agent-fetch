@@ -379,6 +379,80 @@ describe('content-extractors', () => {
       expect(result!.textContent).not.toContain('Buy stuff');
       expect(result!.textContent).not.toContain('Subscribe');
     });
+
+    it('extracts HTML string body from auto-detected data.body path', () => {
+      const htmlBody = `<p>${loremText(MIN_CONTENT_LENGTH)}</p>`;
+      const nextData = {
+        props: {
+          pageProps: {
+            data: {
+              headline: 'Data Section Article',
+              byline: 'Staff Reporter',
+              body: htmlBody,
+              datePublished: '2024-07-01',
+            },
+          },
+        },
+      };
+      const doc = makeDoc(
+        `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script></body></html>`
+      );
+      const result = tryNextDataExtraction(doc, 'https://example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('next-data-html');
+      expect(result!.title).toBe('Data Section Article');
+      expect(result!.byline).toBe('Staff Reporter');
+      expect(result!.publishedTime).toBe('2024-07-01');
+      expect(result!.textContent!.length).toBeGreaterThanOrEqual(MIN_CONTENT_LENGTH);
+    });
+
+    it('extracts plain text string from auto-detected path', () => {
+      const plainText = loremText(MIN_CONTENT_LENGTH);
+      const nextData = {
+        props: {
+          pageProps: {
+            content: {
+              headline: 'Plain Text Article',
+              body: plainText,
+            },
+          },
+        },
+      };
+      const doc = makeDoc(
+        `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script></body></html>`
+      );
+      const result = tryNextDataExtraction(doc, 'https://example.com/plain');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('next-data');
+      expect(result!.title).toBe('Plain Text Article');
+      expect(result!.textContent).toBe(plainText);
+    });
+
+    it('sanitizes dangerous elements from HTML string body', () => {
+      const articleText = loremText(MIN_CONTENT_LENGTH);
+      // Use style and iframe (not script — </script> inside JSON would prematurely
+      // close the outer __NEXT_DATA__ script element during HTML parsing)
+      const htmlBody = `<p>${articleText}</p><style>.x{color:red}</style><iframe src="https://example.com"></iframe>`;
+      const nextData = {
+        props: {
+          pageProps: {
+            data: {
+              headline: 'Sanitized Article',
+              body: htmlBody,
+            },
+          },
+        },
+      };
+      const doc = makeDoc(
+        `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script></body></html>`
+      );
+      const result = tryNextDataExtraction(doc, 'https://example.com/sanitize');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('next-data-html');
+      expect(result!.content).not.toContain('<style>');
+      expect(result!.content).not.toContain('<iframe');
+      expect(result!.content).toContain(`<p>${articleText}</p>`);
+    });
   });
 
   describe('tryUnfluffExtraction', () => {
@@ -548,6 +622,26 @@ describe('content-extractors', () => {
       const result = extractFromHtml(html, 'https://example.com/next-article');
       expect(result).not.toBeNull();
       expect(result!.method).toBe('next-data');
+    });
+
+    it('picks next-data from waterfall without explicit site config', () => {
+      const htmlBody = `<p>${loremText(GOOD_CONTENT_LENGTH)}</p>`;
+      const nextData = {
+        props: {
+          pageProps: {
+            data: {
+              headline: 'Unconfigured Next.js Article',
+              body: htmlBody,
+            },
+          },
+        },
+      };
+      const html = `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script></body></html>`;
+      const result = extractFromHtml(html, 'https://unconfigured-site.example.com/article');
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe('next-data-html');
+      expect(result!.title).toBe('Unconfigured Next.js Article');
+      expect(result!.textContent!.length).toBeGreaterThanOrEqual(GOOD_CONTENT_LENGTH);
     });
 
     it('prefers RSC over Readability when RSC has >2x content', () => {

@@ -561,6 +561,7 @@ const NEXT_DATA_CONTENT_PATHS = [
   'props.pageProps.article.content',
   'props.pageProps.post.body',
   'props.pageProps.post.content',
+  'props.pageProps.data.body',
 ];
 
 /**
@@ -627,12 +628,61 @@ function extractContentBlockMetadata(
   return { title, byline, excerpt, publishedTime };
 }
 
+/** Dangerous elements to strip from API-sourced HTML. */
+const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
+
+/** Remove script, style, and iframe elements from HTML to prevent XSS. */
+function sanitizeHtml(html: string): string {
+  const { document } = parseHTML(`<div>${html}</div>`);
+  for (const selector of DANGEROUS_SELECTORS) {
+    for (const el of document.querySelectorAll(selector)) {
+      el.remove();
+    }
+  }
+  return document.querySelector('div')?.innerHTML ?? html;
+}
+
+/**
+ * Try to extract an ExtractionResult from a string body (HTML or plain text).
+ * Shared by both the custom-path and auto-detect branches of tryNextDataExtraction.
+ */
+function tryStringBodyExtraction(
+  content: string,
+  meta: Record<string, unknown>,
+  document: Document
+): ExtractionResult | null {
+  if (content.length < MIN_CONTENT_LENGTH) return null;
+
+  const isHtml = /<(?:p|div)>/.test(content);
+  const sanitized = isHtml ? sanitizeHtml(content) : content;
+  const textContent = isHtml ? extractTextFromHtml(sanitized) : content;
+  if (textContent.length < MIN_CONTENT_LENGTH) return null;
+
+  return {
+    title: (meta.headline as string) ?? (meta.title as string) ?? extractTitle(document),
+    byline: extractBylineFromAuthors(meta.authors) ?? (meta.byline as string) ?? null,
+    content: isHtml ? sanitized : textContent,
+    textContent,
+    excerpt:
+      (meta.description as string) ??
+      (meta.excerpt as string) ??
+      generateExcerpt(null, textContent),
+    siteName: extractSiteName(document),
+    publishedTime:
+      (meta.datePublished as string) ??
+      (meta.publishedAt as string) ??
+      extractPublishedTime(document),
+    lang: document.documentElement.lang || 'en',
+    method: isHtml ? 'next-data-html' : 'next-data',
+  };
+}
+
 /**
  * Strategy 4: Extract from Next.js __NEXT_DATA__
  * Some sites embed full article content in the page props JSON.
  * Supports three modes (tried in order):
  * 1. Site-specific: Use nextDataPath config to specify custom JSON path
- * 2. Auto-detect: Probe common content paths for content block arrays
+ * 2. Auto-detect: Probe common content paths for content block arrays or string bodies
  * 3. Default: Look for story.body.content structured blocks
  */
 export function tryNextDataExtraction(document: Document, url: string): ExtractionResult | null {
@@ -682,34 +732,24 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
         }
       }
 
-      // Handle string content (existing behavior)
-      if (typeof content === 'string' && content.length >= MIN_CONTENT_LENGTH) {
-        // Content might be HTML or plain text - check for common HTML tags
-        const isHtml = /<(?:p|div)>/.test(content);
-        const textContent = isHtml ? extractTextFromHtml(content) : content;
-
-        if (textContent.length >= MIN_CONTENT_LENGTH) {
+      // Handle string content (HTML or plain text)
+      if (typeof content === 'string') {
+        // Map pageProps fields to the generic metadata shape expected by tryStringBodyExtraction
+        const meta: Record<string, unknown> = {
+          title: pageProps.title,
+          byline: pageProps.author?.name ?? null,
+          description: pageProps.teaser_body ?? pageProps.description,
+          publishedAt: pageProps.publishedAt ?? pageProps.changed_formatted,
+        };
+        const result = tryStringBodyExtraction(content, meta, document);
+        if (result) {
           logger.debug({ url, path: customPath }, 'Next.js custom path extraction succeeded');
-          return {
-            title: pageProps.title ?? extractTitle(document),
-            byline: pageProps.author?.name ?? null,
-            content: isHtml ? content : textContent,
-            textContent,
-            excerpt:
-              pageProps.teaser_body ?? pageProps.description ?? generateExcerpt(null, textContent),
-            siteName: extractSiteName(document),
-            publishedTime:
-              pageProps.publishedAt ??
-              pageProps.changed_formatted ??
-              extractPublishedTime(document),
-            lang: document.documentElement.lang || 'en',
-            method: 'next-data',
-          };
+          return result;
         }
       }
     }
 
-    // Auto-detect: Probe common content paths for content block arrays
+    // Auto-detect: Probe common content paths for content block arrays or string bodies
     for (const path of NEXT_DATA_CONTENT_PATHS) {
       const content = getByPath(data, path);
       if (isContentBlockArray(content)) {
@@ -730,6 +770,19 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
             lang: document.documentElement.lang || 'en',
             method: 'next-data',
           };
+        }
+      }
+
+      // Handle string content (HTML or plain text)
+      if (typeof content === 'string') {
+        const parentPath = path.split('.').slice(0, -1).join('.');
+        const parent = (getByPath(data, parentPath) ?? {}) as Record<string, unknown>;
+        // Fall back to pageProps.title when parent has no title fields
+        const metaWithFallback = { ...parent, title: parent.title ?? pageProps.title };
+        const result = tryStringBodyExtraction(content, metaWithFallback, document);
+        if (result) {
+          logger.debug({ url, path }, 'Next.js auto-detected string content extraction succeeded');
+          return result;
         }
       }
     }
@@ -1035,13 +1088,13 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     };
   }
 
+  // Run Next.js __NEXT_DATA__ extraction once (shared between fast-path and waterfall)
+  const nextDataResult = tryNextDataExtraction(document, url);
+
   // Config-driven: Next.js early return (these sites have complete metadata)
-  if (siteUseNextData(url)) {
-    const nextDataResult = tryNextDataExtraction(document, url);
-    if (meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
-      logger.debug({ url, method: 'next-data' }, 'Extraction succeeded (Next.js data)');
-      return finalizeResult(nextDataResult!);
-    }
+  if (siteUseNextData(url) && meetsThreshold(nextDataResult, GOOD_CONTENT_LENGTH)) {
+    logger.debug({ url, method: 'next-data' }, 'Extraction succeeded (Next.js data)');
+    return finalizeResult(nextDataResult!);
   }
 
   // Config-driven: JSON-LD preferred sites get early return
@@ -1104,6 +1157,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   // so Readability's metadata remains available even when the comparator prefers text-density)
   const allResults = [
     readabilityResult,
+    nextDataResult,
     jsonLdResult,
     selectorResult,
     textDensityResult,
@@ -1117,6 +1171,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     effectiveReadability,
     rscResult,
     nuxtResult,
+    nextDataResult,
     jsonLdResult,
     textDensityResult,
   ].filter((r): r is ExtractionResult => meetsThreshold(r, GOOD_CONTENT_LENGTH));
@@ -1140,6 +1195,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     [effectiveReadability, MIN_CONTENT_LENGTH],
     [rscResult, MIN_CONTENT_LENGTH],
     [nuxtResult, MIN_CONTENT_LENGTH],
+    [nextDataResult, MIN_CONTENT_LENGTH],
     [jsonLdResult, MIN_CONTENT_LENGTH],
     [selectorResult, MIN_CONTENT_LENGTH],
     [textDensityResult, MIN_CONTENT_LENGTH],
@@ -1158,6 +1214,7 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
     effectiveReadability ??
     rscResult ??
     nuxtResult ??
+    nextDataResult ??
     jsonLdResult ??
     selectorResult ??
     textDensityResult ??
