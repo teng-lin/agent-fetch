@@ -1,9 +1,26 @@
 /**
  * Structured logging with pino
  */
+import { createRequire } from 'node:module';
 import pino from 'pino';
 
-const isDev = process.env.NODE_ENV !== 'production';
+const require = createRequire(import.meta.url);
+const isDev = process.env.NODE_ENV === 'development';
+
+/**
+ * Check if pino-pretty is available in development mode.
+ * Provides graceful degradation if the module is missing or corrupted.
+ */
+function isPinoPrettyAvailable(): boolean {
+  if (!isDev) return false;
+  try {
+    require.resolve('pino-pretty');
+    return true;
+  } catch (e) {
+    console.debug('pino-pretty not available, using JSON logs:', e);
+    return false;
+  }
+}
 
 const VALID_LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
 
@@ -25,7 +42,7 @@ const options = {
   },
 };
 
-export const logger = isDev
+export const logger = isPinoPrettyAvailable()
   ? pino({
       ...options,
       transport: {
