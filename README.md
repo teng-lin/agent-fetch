@@ -112,6 +112,16 @@ agent-fetch runs 7 extraction strategies in parallel and picks the most complete
 
 **Winner selection:** Strategies that extract 500+ characters are candidates. If text-density or RSC finds 2x more content than Readability, it wins. Otherwise, the longest result is chosen. Metadata (author, date, site name) is composed from the best source for each field across all strategies.
 
+## Responsible Use
+
+**Disclaimer:** This tool is intended for fetching publicly accessible web content. Users are solely responsible for:
+
+- Complying with each website's Terms of Service and `robots.txt` directives
+- Ensuring lawful use under applicable laws (including copyright, computer access, and data protection regulations)
+- Obtaining necessary permissions before accessing or extracting content
+
+The authors make no warranties about the legality of any specific use case. This tool does not grant permission to access any website or circumvent any access controls.
+
 ## License
 
 MIT

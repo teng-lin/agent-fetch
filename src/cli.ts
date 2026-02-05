@@ -70,7 +70,11 @@ Options:
   -q, --quiet         Markdown content only (no metadata)
   --text              Plain text content only (no metadata, no markdown)
   --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
-  -h, --help          Show this help message`);
+  -h, --help          Show this help message
+
+Disclaimer:
+  Users are responsible for complying with website terms of service,
+  robots.txt directives, and applicable laws. See README for details.`);
 }
 
 export async function main(): Promise<void> {
