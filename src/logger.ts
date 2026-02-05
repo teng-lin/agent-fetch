@@ -15,22 +15,27 @@ function getLogLevel(): string {
   return 'info';
 }
 
-export const logger = pino({
+const options = {
   level: getLogLevel(),
-  transport: isDev
-    ? {
+  formatters: {
+    level: (label: string) => ({ level: label }),
+  },
+  base: {
+    service: 'agent-fetch',
+  },
+};
+
+export const logger = isDev
+  ? pino({
+      ...options,
+      transport: {
         target: 'pino-pretty',
         options: {
           colorize: true,
           translateTime: 'SYS:standard',
           ignore: 'pid,hostname',
+          destination: 2,
         },
-      }
-    : undefined,
-  formatters: {
-    level: (label) => ({ level: label }),
-  },
-  base: {
-    service: 'agent-fetch',
-  },
-});
+      },
+    })
+  : pino(options, pino.destination(2));
