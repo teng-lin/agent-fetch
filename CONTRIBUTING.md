@@ -208,3 +208,143 @@ npm run build
 npm run lint
 npm run format
 ```
+
+## Releasing
+
+Checklist for releasing a new version of `@teng-lin/agent-fetch` to npm.
+
+### Prerequisites
+
+- npm automation token added as `NPM_TOKEN` in GitHub repo secrets (Settings > Secrets and variables > Actions)
+- Push access to the repository
+
+### Version Numbering
+
+| Change Type                                | Bump  | Example       |
+| ------------------------------------------ | ----- | ------------- |
+| Bug fixes, internal improvements           | PATCH | 0.1.1 → 0.1.2 |
+| New public API (new exports in `index.ts`) | MINOR | 0.1.2 → 0.2.0 |
+| Breaking changes to public API             | MAJOR | 0.2.0 → 1.0.0 |
+
+### Release Steps
+
+#### 1. Create Release Worktree
+
+```bash
+git worktree add .worktrees/release-X.Y.Z -b release/X.Y.Z
+cd .worktrees/release-X.Y.Z
+npm install
+```
+
+#### 2. Version Bump
+
+Update version in `package.json`:
+
+```bash
+npm version X.Y.Z --no-git-tag-version
+```
+
+#### 3. Update Changelog
+
+Get commits since last release:
+
+```bash
+git log $(git describe --tags --abbrev=0)..HEAD --oneline
+```
+
+Update `CHANGELOG.md`:
+
+- Move `[Unreleased]` entries to a new version section: `## [X.Y.Z] - YYYY-MM-DD`
+- Categorize changes into: Added, Fixed, Changed, Removed
+- Update comparison links at the bottom of the file
+
+#### 4. Pre-Commit Checks
+
+Run all checks before committing:
+
+```bash
+npm run lint && npm run format:check && npm run test && npm run build
+```
+
+Fix any issues before proceeding.
+
+#### 5. Commit and Create PR
+
+```bash
+git add package.json package-lock.json CHANGELOG.md
+git commit -m "chore: release vX.Y.Z"
+git push -u origin release/X.Y.Z
+gh pr create --title "chore: release vX.Y.Z" --body "Release vX.Y.Z"
+```
+
+Wait for CI to pass on the PR.
+
+#### 6. Merge to Main
+
+```bash
+gh pr merge --squash --delete-branch
+```
+
+Pull latest main in the main repo:
+
+```bash
+cd ../..
+git pull origin main
+```
+
+#### 7. Tag and Publish
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+This triggers the `publish.yml` workflow which:
+
+- Validates the tag version matches `package.json`
+- Runs lint, format, test, and build
+- Publishes to npm with provenance attestation
+- Creates a GitHub release with auto-generated notes
+
+Verify at: https://www.npmjs.com/package/@teng-lin/agent-fetch
+
+#### 8. Cleanup
+
+```bash
+git worktree remove .worktrees/release-X.Y.Z
+git branch -d release/X.Y.Z
+```
+
+### Troubleshooting
+
+#### CI fails on PR
+
+Fix in the release worktree and push again:
+
+```bash
+git add -A
+git commit -m "fix: address CI failures"
+git push
+```
+
+#### Need to abort release
+
+```bash
+gh pr close
+git worktree remove .worktrees/release-X.Y.Z
+git branch -D release/X.Y.Z
+git push origin --delete release/X.Y.Z
+```
+
+#### Tag already exists
+
+```bash
+git tag -d vX.Y.Z
+git push origin --delete vX.Y.Z
+```
+
+#### npm publish fails
+
+- Verify `NPM_TOKEN` secret is configured in GitHub repo settings
+- Check if version already exists on npm (cannot republish same version)
+- Bump to next patch version if needed
