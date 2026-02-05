@@ -413,10 +413,22 @@ describe('fetch/http-client', () => {
       mockGet.mockImplementation(() => new Promise(() => {}));
 
       const resultPromise = httpRequest('https://example.com/page');
-      await vi.advanceTimersByTimeAsync(11000);
+      await vi.advanceTimersByTimeAsync(21000); // Default timeout is 20s
       const result = await resultPromise;
       expect(result.success).toBe(false);
       expect(result.error).toContain('Request timeout');
+    });
+
+    it('respects custom timeout value', async () => {
+      vi.useFakeTimers();
+      // Mock session.get to never resolve (simulates hang)
+      mockGet.mockImplementation(() => new Promise(() => {}));
+
+      const resultPromise = httpRequest('https://example.com/page', {}, undefined, 5000);
+      await vi.advanceTimersByTimeAsync(6000); // Custom timeout is 5s
+      const result = await resultPromise;
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Request timeout after 5000ms');
     });
 
     it('handles DNS resolution timeout', async () => {

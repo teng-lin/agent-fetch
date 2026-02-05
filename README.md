@@ -64,6 +64,9 @@ npx agent-fetch https://example.com/article --text
 # Raw HTML (no extraction)
 npx agent-fetch https://example.com/article --raw
 
+# Custom timeout (default: 20s)
+npx agent-fetch https://example.com/article --timeout 30000
+
 # Show version
 npx agent-fetch --version
 ```
@@ -97,6 +100,12 @@ if (result.success) {
   console.log(result.textContent); // Plain text
   console.log(result.latencyMs); // 523
 }
+
+// With options
+const result2 = await httpFetch('https://slow-site.com/article', {
+  timeout: 30000, // 30 second timeout (default: 20s)
+  preset: 'chrome-143', // TLS preset
+});
 ```
 
 ## How Extraction Works

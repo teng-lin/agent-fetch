@@ -125,6 +125,46 @@ describe('CLI parseArgs', () => {
       expect(result.opts.preset).toBeUndefined();
     }
   });
+
+  it('parses --timeout flag correctly', () => {
+    const result = parseArgs(['https://example.com', '--timeout', '5000']);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.opts.timeout).toBe(5000);
+    }
+  });
+
+  it('timeout defaults to undefined when not provided', () => {
+    const result = parseArgs(['https://example.com']);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.opts.timeout).toBeUndefined();
+    }
+  });
+
+  it('returns error when --timeout is missing value', () => {
+    const result = parseArgs(['https://example.com', '--timeout']);
+    expect(result.kind).toBe('error');
+    if (result.kind === 'error') {
+      expect(result.message).toContain('--timeout requires a value');
+    }
+  });
+
+  it('returns error when --timeout value is not a positive integer', () => {
+    const result = parseArgs(['https://example.com', '--timeout', '-100']);
+    expect(result.kind).toBe('error');
+    if (result.kind === 'error') {
+      expect(result.message).toContain('--timeout must be a positive integer');
+    }
+  });
+
+  it('returns error when --timeout value is not a number', () => {
+    const result = parseArgs(['https://example.com', '--timeout', 'abc']);
+    expect(result.kind).toBe('error');
+    if (result.kind === 'error') {
+      expect(result.message).toContain('--timeout must be a positive integer');
+    }
+  });
 });
 
 describe('CLI main', () => {
@@ -171,7 +211,10 @@ describe('CLI main', () => {
     process.argv = ['node', 'cli.js', 'https://example.com/article'];
     await main();
 
-    expect(httpFetch).toHaveBeenCalledWith('https://example.com/article', { preset: undefined });
+    expect(httpFetch).toHaveBeenCalledWith('https://example.com/article', {
+      preset: undefined,
+      timeout: undefined,
+    });
     expect(closeAllSessions).toHaveBeenCalled();
   });
 
@@ -190,7 +233,12 @@ describe('CLI main', () => {
     process.argv = ['node', 'cli.js', 'https://example.com/article', '--raw'];
     await main();
 
-    expect(httpRequest).toHaveBeenCalledWith('https://example.com/article', {}, undefined);
+    expect(httpRequest).toHaveBeenCalledWith(
+      'https://example.com/article',
+      {},
+      undefined,
+      undefined
+    );
     expect(consoleLogSpy).toHaveBeenCalledWith('<html>Raw HTML</html>');
     expect(closeAllSessions).toHaveBeenCalled();
   });
@@ -212,6 +260,47 @@ describe('CLI main', () => {
 
     await expect(main()).rejects.toThrow('process.exit(1)');
     expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Access forbidden');
+    expect(closeAllSessions).toHaveBeenCalled();
+  });
+
+  it('passes timeout option to httpFetch', async () => {
+    const { httpFetch } = await import('../fetch/http-fetch.js');
+    const { closeAllSessions } = await import('../fetch/http-client.js');
+
+    vi.mocked(httpFetch).mockResolvedValue({
+      success: true,
+      url: 'https://example.com/article',
+      latencyMs: 500,
+      title: 'Test Article',
+      markdown: 'Test content',
+    });
+
+    process.argv = ['node', 'cli.js', 'https://example.com/article', '--timeout', '5000'];
+    await main();
+
+    expect(httpFetch).toHaveBeenCalledWith('https://example.com/article', {
+      preset: undefined,
+      timeout: 5000,
+    });
+    expect(closeAllSessions).toHaveBeenCalled();
+  });
+
+  it('passes timeout option to httpRequest in raw mode', async () => {
+    const { httpRequest } = await import('../fetch/http-client.js');
+    const { closeAllSessions } = await import('../fetch/http-client.js');
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html>Raw HTML</html>',
+      headers: {},
+      cookies: [],
+    });
+
+    process.argv = ['node', 'cli.js', 'https://example.com/article', '--raw', '--timeout', '3000'];
+    await main();
+
+    expect(httpRequest).toHaveBeenCalledWith('https://example.com/article', {}, undefined, 3000);
     expect(closeAllSessions).toHaveBeenCalled();
   });
 });

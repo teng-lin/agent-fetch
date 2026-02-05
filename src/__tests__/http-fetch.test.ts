@@ -141,6 +141,7 @@ describe('httpFetch', () => {
         'User-Agent': customUA,
         Referer: customReferer,
       }),
+      undefined,
       undefined
     );
   });

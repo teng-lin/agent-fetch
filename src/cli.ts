@@ -29,6 +29,7 @@ interface CliOptions {
   quiet: boolean;
   text: boolean;
   preset?: string;
+  timeout?: number;
 }
 
 type ParseResult =
@@ -45,6 +46,7 @@ export function parseArgs(args: string[]): ParseResult {
   let quiet = false;
   let text = false;
   let preset: string | undefined;
+  let timeout: number | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -75,6 +77,17 @@ export function parseArgs(args: string[]): ParseResult {
         }
         preset = args[++i];
         break;
+      case '--timeout': {
+        if (i + 1 >= args.length) {
+          return { kind: 'error', message: '--timeout requires a value' };
+        }
+        const value = parseInt(args[++i], 10);
+        if (isNaN(value) || value <= 0) {
+          return { kind: 'error', message: '--timeout must be a positive integer (milliseconds)' };
+        }
+        timeout = value;
+        break;
+      }
       default:
         if (arg.startsWith('-')) {
           warnings.push(`Unknown option: ${arg}`);
@@ -90,7 +103,7 @@ export function parseArgs(args: string[]): ParseResult {
 
   return {
     kind: 'ok',
-    opts: { url: positional[0], json, raw, quiet, text, preset },
+    opts: { url: positional[0], json, raw, quiet, text, preset, timeout },
     warnings,
   };
 }
@@ -106,6 +119,7 @@ Options:
   -q, --quiet         Markdown content only (no metadata)
   --text              Plain text content only (no metadata, no markdown)
   --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
+  --timeout <ms>      Request timeout in milliseconds (default: 20000)
   -v, --version       Show version number
   -h, --help          Show this help message
 
@@ -142,7 +156,7 @@ export async function main(): Promise<void> {
   try {
     // --raw mode: fetch HTML without extraction
     if (opts.raw) {
-      const response = await httpRequest(opts.url, {}, opts.preset);
+      const response = await httpRequest(opts.url, {}, opts.preset, opts.timeout);
       if (response.statusCode !== 200) {
         console.error(`HTTP ${response.statusCode}`);
         process.exit(1);
@@ -152,7 +166,7 @@ export async function main(): Promise<void> {
     }
 
     // Default: fetch + extract
-    const fetchResult = await httpFetch(opts.url, { preset: opts.preset });
+    const fetchResult = await httpFetch(opts.url, { preset: opts.preset, timeout: opts.timeout });
 
     if (opts.json) {
       console.log(JSON.stringify(fetchResult, null, 2));

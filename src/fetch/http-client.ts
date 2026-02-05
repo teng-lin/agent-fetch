@@ -36,7 +36,7 @@ const sessionLocks = new Map<string, Promise<void>>();
 const SESSION_TIMEOUT_SEC = 10; // Reduced from 30s to 10s
 const SESSION_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 const SESSION_MAX_REQUESTS = 10000; // Recycle after 10K requests
-const REQUEST_TIMEOUT_MS = 10000; // 10 second request timeout
+const DEFAULT_REQUEST_TIMEOUT_MS = 20000; // 20 second request timeout
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
 const DNS_TIMEOUT_MS = 5000;
 
@@ -305,13 +305,16 @@ function dispatchRequest(
   return session.get(url, { headers });
 }
 
-/** Create a timeout promise that rejects after REQUEST_TIMEOUT_MS. */
-function createRequestTimeout(url: string): { promise: Promise<never>; cancel: () => void } {
+/** Create a timeout promise that rejects after the specified timeout. */
+function createRequestTimeout(
+  url: string,
+  timeoutMs: number
+): { promise: Promise<never>; cancel: () => void } {
   let timeoutId: NodeJS.Timeout;
   const promise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(
-      () => reject(new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms for ${url}`)),
-      REQUEST_TIMEOUT_MS
+      () => reject(new Error(`Request timeout after ${timeoutMs}ms for ${url}`)),
+      timeoutMs
     );
   });
   return { promise, cancel: () => clearTimeout(timeoutId) };
@@ -326,7 +329,8 @@ async function httpRequestInternal(
   url: string,
   headers: Record<string, string>,
   body: Record<string, string> | undefined,
-  preset: string | undefined
+  preset: string | undefined,
+  timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS
 ): Promise<HttpResponse> {
   let sessionMetadata: SessionMetadata | undefined;
   const cacheKey = String(preset ?? DEFAULT_PRESET);
@@ -350,7 +354,7 @@ async function httpRequestInternal(
 
     logger.debug({ url, method, headers: mergedHeaders }, 'Making httpcloak request');
 
-    let timeout = createRequestTimeout(url);
+    let timeout = createRequestTimeout(url, timeoutMs);
 
     try {
       let response = await Promise.race([
@@ -369,7 +373,7 @@ async function httpRequestInternal(
           preset: preset ?? DEFAULT_PRESET,
           timeout: SESSION_TIMEOUT_SEC,
         });
-        timeout = createRequestTimeout(url);
+        timeout = createRequestTimeout(url, timeoutMs);
         try {
           response = await Promise.race([
             dispatchRequest(freshSession, method, url, mergedHeaders, body),
@@ -491,9 +495,10 @@ async function httpRequestInternal(
 export async function httpRequest(
   url: string,
   headers: Record<string, string> = {},
-  preset?: string
+  preset?: string,
+  timeoutMs?: number
 ): Promise<HttpResponse> {
-  return httpRequestInternal('GET', url, headers, undefined, preset);
+  return httpRequestInternal('GET', url, headers, undefined, preset, timeoutMs);
 }
 
 /**
@@ -504,7 +509,8 @@ export async function httpPost(
   url: string,
   formData: Record<string, string>,
   headers?: Record<string, string>,
-  preset?: string
+  preset?: string,
+  timeoutMs?: number
 ): Promise<HttpResponse> {
   return httpRequestInternal(
     'POST',
@@ -514,6 +520,7 @@ export async function httpPost(
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     formData,
-    preset
+    preset,
+    timeoutMs
   );
 }
