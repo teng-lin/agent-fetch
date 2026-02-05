@@ -1,6 +1,11 @@
 # agent-fetch
 
-**Full-content web fetcher for AI agents and content workflows.** Standard HTTP tools (curl, wget, or an agent's built-in web fetch) are often served truncated or different responses because servers inspect the client's network fingerprint. agent-fetch uses [Chrome TLS fingerprinting](https://github.com/nichochar/httpcloak) so servers respond as they would to a real browser, then runs 7 extraction strategies to pull the complete article — every paragraph, heading, and link. Runs locally with no API keys or cloud dependencies.
+[![npm version](https://img.shields.io/npm/v/%40teng-lin%2Fagent-fetch.svg)](https://www.npmjs.com/package/@teng-lin/agent-fetch)
+[![Node Version](https://img.shields.io/badge/node-20%20%7C%2022%20%7C%2025-blue)](https://www.npmjs.com/package/@teng-lin/agent-fetch)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/teng-lin/agent-fetch/actions/workflows/ci.yml/badge.svg)](https://github.com/teng-lin/agent-fetch/actions/workflows/ci.yml)
+
+**Full-content web fetcher for AI agents and content workflows.** Standard HTTP tools (curl, wget, or an agent's built-in web fetch) are often served truncated or different responses because servers inspect the client's network fingerprint. agent-fetch uses [Chrome TLS fingerprinting](https://github.com/nichochar/httpcloak) so servers respond as they would to a real browser, then runs 9 extraction strategies to pull the complete article — every paragraph, heading, and link. Runs locally with no API keys or cloud dependencies.
 
 Also useful for:
 
@@ -8,14 +13,14 @@ Also useful for:
 - **RAG pipelines** need clean markdown from web pages, not HTML soup or truncated summaries
 - **LLM conversations** where you need the full article in context, not a 3-paragraph summary
 
-|                           | Built-in agent fetch  | Cloud extraction APIs | agent-fetch                                                                 |
-| ------------------------- | --------------------- | --------------------- | --------------------------------------------------------------------------- |
-| **Content**               | Summary or truncation | Full (usually)        | Full article text                                                           |
-| **Structure**             | Plain text blob       | Markdown (varies)     | Markdown with headings, links, lists                                        |
-| **Runs locally**          | Yes                   | No                    | Yes                                                                         |
-| **API key required**      | No                    | Yes                   | No                                                                          |
-| **Extraction strategies** | 1 (basic parse)       | 1–2                   | 7 (Readability, JSON-LD, Next.js, RSC, WP API, text-density, CSS selectors) |
-| **Open source**           | N/A                   | Partial               | Yes                                                                         |
+|                           | Built-in agent fetch  | Cloud extraction APIs | agent-fetch                                                                                     |
+| ------------------------- | --------------------- | --------------------- | ----------------------------------------------------------------------------------------------- |
+| **Content**               | Summary or truncation | Full (usually)        | Full article text                                                                               |
+| **Structure**             | Plain text blob       | Markdown (varies)     | Markdown with headings, links, lists                                                            |
+| **Runs locally**          | Yes                   | No                    | Yes                                                                                             |
+| **API key required**      | No                    | Yes                   | No                                                                                              |
+| **Extraction strategies** | 1 (basic parse)       | 1–2                   | 9 (Readability, JSON-LD, Next.js, RSC, Nuxt, React Router, WP API, text-density, CSS selectors) |
+| **Open source**           | N/A                   | Partial               | Yes                                                                                             |
 
 ## Install
 

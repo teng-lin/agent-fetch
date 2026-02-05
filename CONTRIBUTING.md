@@ -85,6 +85,119 @@ Options:
   -h, --help          Show help
 ```
 
+## Extraction Pipeline
+
+When `httpFetch(url)` is called, the request flows through multiple stages. Structured
+API paths are tried first (faster, more reliable), falling back to DOM-based extraction
+with 9 parallel strategies and intelligent winner selection.
+
+```
+httpFetch(url)
+│
+├─ STAGE 1: WordPress Fast Path
+│  Is site configured for WP REST API?
+│  ├─ Yes → GET /wp-json/wp/v2/posts?slug=…&_embed
+│  │        └─ Success? → return  ────────────────────────────────┐
+│  └─ No/Fail ↓                                                   │
+│                                                                 │
+├─ STAGE 2: HTTP Fetch                                            │
+│  httpRequest(url) with Chrome TLS fingerprinting (httpcloak)    │
+│  ├─ SSRF protection (reject private IPs)                        │
+│  ├─ 10s timeout, 10MB size limit                                │
+│  └─ Retry up to 2× with exponential backoff                     │
+│     └─ Response ↓                                               │
+│                                                                 │
+├─ STAGE 3: Content Validation                                    │
+│  quickValidate(html)                                            │
+│  ├─ HTTP 200-299?                                               │
+│  ├─ Content-Type: text/html?                                    │
+│  ├─ Body ≥ 5KB?                                                 │
+│  └─ Word count ≥ 100?                                           │
+│     ├─ Fail → STAGE 4 (fallbacks)                               │
+│     └─ Pass ↓                                                   │
+│                                                                 │
+├─ STAGE 4: API Fallbacks (if validation failed)                  │
+│  Try in order, return first success:                            │
+│  ├─ 1. __NEXT_DATA__ extraction                                 │
+│  ├─ 2. WP REST API (auto-detect from <link rel="alternate">)    │
+│  ├─ 3. Arc XP Prism content API                                 │
+│  └─ 4. WP AJAX (admin-ajax.php POST)                            │
+│     └─ Success? → return  ────────────────────────────────┐     │
+│                                                           │     │
+├─ STAGE 5: WP REST API Priority Path                       │     │
+│  (structured data preferred over DOM parsing)             │     │
+│  ├─ Detect API URL from HTML or site config               │     │
+│  ├─ Fetch & extract from API                              │     │
+│  └─ Compare API vs DOM content length                     │     │
+│     ├─ DOM > 2× API and DOM ≥ 500 chars → use DOM,        │     │
+│     │  but enrich with API metadata                       │     │
+│     └─ Otherwise → use API  ──────────────────────────┐   │     │
+│                                                       │   │     │
+├─ STAGE 6: DOM Extraction                              │   │     │
+│  extractFromHtml() — run 9 strategies in parallel:    │   │     │
+│                                                       │   │     │
+│  ┌──────────────────────────────────────────────────┐ │   │     │
+│  │  Strategy          │ Approach                    │ │   │     │
+│  ├──────────────────────────────────────────────────┤ │   │     │
+│  │  Readability       │ Mozilla Reader View algo    │ │   │     │
+│  │  Text Density      │ Text-to-tag ratio (CETD)    │ │   │     │
+│  │  JSON-LD           │ schema.org structured data  │ │   │     │
+│  │  Next.js           │ __NEXT_DATA__ page props    │ │   │     │
+│  │  RSC               │ React Server Components     │ │   │     │
+│  │  Nuxt              │ Nuxt payload extraction     │ │   │     │
+│  │  React Router      │ Hydration data extraction   │ │   │     │
+│  │  CSS Selectors     │ <article>, .post-content    │ │   │     │
+│  │  Unfluff           │ Goose-port heuristics       │ │   │     │
+│  └──────────────────────────────────────────────────┘ │   │     │
+│     │                                                 │   │     │
+│     ▼                                                 │   │     │
+│  Winner Selection:                                    │   │     │
+│  1. Config-driven: siteUseNextData / sitePreferJsonLd │   │     │
+│     → if ≥ 500 chars, return immediately              │   │     │
+│  2. Comparators:                                      │   │     │
+│     TextDensity > 2× Readability → prefer TextDensity │   │     │
+│     RSC > 2× Readability → prefer RSC                 │   │     │
+│  3. All strategies ≥ 500 chars → pick longest         │   │     │
+│  4. Fallback: any ≥ 200 chars in priority order       │   │     │
+│  5. Last resort: best partial available               │   │     │
+│     │                                                 │   │     │
+│     ▼                                                 │   │     │
+│  Metadata Composition:                                │   │     │
+│  Winner's content + best metadata from ALL strategies │   │     │
+│  (byline, publishedTime, siteName, lang)              │   │     │
+│     └─ extraction result ↓                            │   │     │
+│                                                       │   │     │
+├─ STAGE 7: Next.js Data Route Probe                    │   │     │
+│  If DOM result < 2000 chars:                          │   │     │
+│  ├─ Fetch /_next/data/{buildId}/{path}.json           │   │     │
+│  └─ Use only if data route has MORE content           │   │     │
+│     ↓                                                 │   │     │
+│                                                       │   │     │
+├─ STAGE 8: Markdown Conversion                         │   │     │
+│  ├─ HTML strategies → Turndown to markdown            │   │     │
+│  └─ Text strategies → use textContent as-is           │   │     │
+│     ↓                                                 │   │     │
+│     ◄─────────────────────────────────────────────────┘───┘     │
+│     ◄───────────────────────────────────────────────────────────┘
+│
+└─ FetchResult
+   { success, url, title, byline, markdown, textContent,
+     excerpt, siteName, publishedTime, lang, latencyMs,
+     extractionMethod, isAccessibleForFree }
+```
+
+Key design decisions:
+
+- **Structured APIs first**: WordPress REST API and other content APIs are checked
+  before DOM parsing — structured data is more reliable than heuristic extraction.
+- **9 complementary strategies**: No single method works for every site. Readability
+  handles most articles, but Next.js/RSC/WP API handle framework-rendered pages that
+  DOM parsers miss.
+- **2× comparator rule**: Text-density and RSC can override Readability when they
+  find significantly more content (2× threshold prevents false positives).
+- **Metadata composition**: The winner provides content, but metadata (author, date,
+  site name) is sourced from whichever strategy found the best value for each field.
+
 ## Development
 
 ```bash
