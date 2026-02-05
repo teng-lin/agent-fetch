@@ -57,13 +57,11 @@ export function quickValidate(
   }
 
   // Check 4: Extract text content and count words
-  // Quick and dirty: strip HTML tags, decode common entities
+  // Strip script/style tags, HTML tags, and decode entities
   const textContent = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&[a-z]+;/gi, ' ')
+    .replace(/&#?\w+;/g, ' ')
     .trim();
 
   const wordCount = countWords(textContent);

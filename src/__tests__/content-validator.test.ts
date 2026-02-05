@@ -45,4 +45,28 @@ describe('quickValidate', () => {
     expect(result.valid).toBe(false);
     expect(result.error).toBe('insufficient_content');
   });
+
+  it('handles malformed nested script tags without hanging', () => {
+    // Pathological input that causes catastrophic backtracking with
+    // the old regex: /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi
+    const nested = '<script>' + '<script>'.repeat(50) + '</script>';
+    const content = 'Lorem ipsum dolor sit amet. '.repeat(200);
+    const html = `<html><body>${nested}${content}</body></html>`;
+    const start = performance.now();
+    const result = quickValidate(html, 200, 'text/html');
+    const elapsed = performance.now() - start;
+    expect(result.valid).toBe(true);
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it('strips numeric HTML entities from word count', () => {
+    // Numeric entities (&#123;, &#x7b;) should not inflate the word count.
+    // Build a page where all "words" are just numeric entities — should fail word count.
+    const entities = '&#60; &#x3C; &#123; &#x7b; '.repeat(100);
+    const padding = 'x'.repeat(5200);
+    const html = `<html><body>${padding}${entities}</body></html>`;
+    const result = quickValidate(html, 200, 'text/html');
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('insufficient_content');
+  });
 });
