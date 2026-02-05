@@ -20,8 +20,6 @@ export interface SiteConfig {
   userAgent?: string;
   /** Custom Referer header */
   referer?: string;
-  /** Whether to allow cookies (default: false - cookies are cleared) */
-  allowCookies?: boolean;
   /** Prefer JSON-LD extraction (full content in structured data) */
   preferJsonLd?: boolean;
   /** Use Next.js __NEXT_DATA__ extraction for sites using Next.js framework */
@@ -41,7 +39,6 @@ export interface SiteConfig {
 export const SiteConfigSchema = z.object({
   userAgent: z.string().optional(),
   referer: z.string().url().optional(),
-  allowCookies: z.boolean().optional(),
   preferJsonLd: z.boolean().optional(),
   useNextData: z.boolean().optional(),
   nextDataPath: z.string().optional(),
@@ -67,7 +64,6 @@ export function parseSiteConfigJson(raw: Record<string, unknown>): Record<string
 
     if (typeof cfg.userAgent === 'string') config.userAgent = cfg.userAgent;
     if (typeof cfg.referer === 'string') config.referer = cfg.referer;
-    if (typeof cfg.allowCookies === 'boolean') config.allowCookies = cfg.allowCookies;
     if (typeof cfg.preferJsonLd === 'boolean') config.preferJsonLd = cfg.preferJsonLd;
     if (typeof cfg.useNextData === 'boolean') config.useNextData = cfg.useNextData;
     if (typeof cfg.nextDataPath === 'string') config.nextDataPath = cfg.nextDataPath;

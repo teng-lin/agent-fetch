@@ -21,7 +21,6 @@ describe('parseSiteConfigJson', () => {
       'test.com': {
         userAgent: 'TestBot/1.0',
         referer: 'https://google.com/',
-        allowCookies: true,
         preferJsonLd: true,
         useNextData: false,
         nextDataPath: 'props.pageProps.content',
@@ -34,7 +33,6 @@ describe('parseSiteConfigJson', () => {
     expect(result['test.com']).toEqual({
       userAgent: 'TestBot/1.0',
       referer: 'https://google.com/',
-      allowCookies: true,
       preferJsonLd: true,
       useNextData: false,
       nextDataPath: 'props.pageProps.content',
@@ -59,7 +57,6 @@ describe('parseSiteConfigJson', () => {
     const result = parseSiteConfigJson({
       'test.com': {
         userAgent: 123,
-        allowCookies: 'yes',
         preferJsonLd: 1,
       },
     });
@@ -70,12 +67,12 @@ describe('parseSiteConfigJson', () => {
     const result = parseSiteConfigJson({
       'a.com': { userAgent: 'A' },
       'b.com': { userAgent: 'B' },
-      'c.com': { allowCookies: true },
+      'c.com': { preferJsonLd: true },
     });
     expect(Object.keys(result)).toHaveLength(3);
     expect(result['a.com'].userAgent).toBe('A');
     expect(result['b.com'].userAgent).toBe('B');
-    expect(result['c.com'].allowCookies).toBe(true);
+    expect(result['c.com'].preferJsonLd).toBe(true);
   });
 
   it('returns empty object for empty input', () => {
