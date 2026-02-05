@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/teng-lin/agent-fetch/actions/workflows/ci.yml/badge.svg)](https://github.com/teng-lin/agent-fetch/actions/workflows/ci.yml)
 
-**Full-content web fetcher for AI agents and content workflows.** Standard HTTP tools (curl, wget, or an agent's built-in web fetch) are often served truncated or different responses because servers inspect the client's network fingerprint. agent-fetch uses [Chrome TLS fingerprinting](https://github.com/nichochar/httpcloak) so servers respond as they would to a real browser, then runs 9 extraction strategies to pull the complete article — every paragraph, heading, and link. Runs locally with no API keys or cloud dependencies.
+**Full-content web fetcher for AI agents and content workflows.** Standard HTTP tools (curl, wget, or an agent's built-in web fetch) are often served truncated or different responses because servers inspect the client's network fingerprint. agent-fetch uses [browser impersonation](https://github.com/sardanioss/httpcloak) so servers respond as they would to a real browser, then runs 9 extraction strategies to pull the complete article — every paragraph, heading, and link. Runs locally with no API keys or cloud dependencies.
 
 Also useful for:
 

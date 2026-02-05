@@ -1,11 +1,11 @@
 ---
 name: agent-fetch
-description: Fetch and extract full article content from URLs. Returns complete text with structure (headings, links, lists) instead of summaries. 7 extraction strategies, Chrome TLS fingerprinting, 200-700ms.
+description: Fetch and extract full article content from URLs. Returns complete text with structure (headings, links, lists) instead of summaries. 7 extraction strategies, browser impersonation, 200-700ms.
 ---
 
 # agent-fetch Skill
 
-**A better web fetch for text content.** Your built-in web fetch summarizes or truncates pages. agent-fetch extracts the complete article — every paragraph, heading, and link — using 7 extraction strategies and Chrome TLS fingerprinting. No server required, runs as a local CLI tool.
+**A better web fetch for text content.** Your built-in web fetch summarizes or truncates pages. agent-fetch extracts the complete article — every paragraph, heading, and link — using 7 extraction strategies and browser impersonation. No server required, runs as a local CLI tool.
 
 ## When to Use This Skill
 
@@ -28,7 +28,7 @@ npx agent-fetch --help
 
 ### `/agent-fetch <url>` - Fetch and Extract Article
 
-**Default usage.** Fetches URL with Chrome TLS fingerprinting and extracts complete article content as markdown.
+**Default usage.** Fetches URL with browser impersonation and extracts complete article content as markdown.
 
 ```bash
 npx agent-fetch "<url>" --json
@@ -107,7 +107,7 @@ The longest valid result wins. Metadata (author, date, site name) is composed fr
 | **Structure**          | Markdown with headings, links, lists | Plain text         |
 | **Metadata**           | Title, author, date, site name       | None               |
 | **Extraction**         | 7 strategies (best result wins)      | Basic parse        |
-| **TLS fingerprinting** | Chrome TLS via httpcloak             | Basic headers      |
+| **TLS fingerprinting** | Browser impersonation via httpcloak  | Basic headers      |
 | **Speed**              | 200-700ms                            | 2-5s               |
 | **Install needed**     | Yes (npm)                            | No (built-in)      |
 | **JavaScript**         | No                                   | Yes                |

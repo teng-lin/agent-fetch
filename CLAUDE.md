@@ -1,6 +1,6 @@
 # CLAUDE.md — agent-fetch
 
-Full-content web fetcher and article extractor for AI agents. Chrome TLS fingerprinting (httpcloak) with multi-strategy content extraction.
+Full-content web fetcher and article extractor for AI agents. Browser impersonation (httpcloak) with multi-strategy content extraction.
 
 ## Commands
 
@@ -41,7 +41,7 @@ src/
   cli.ts                  # CLI entry point (5 output modes: default, --json, --raw, --text, -q)
   index.ts                # Public API exports
   logger.ts               # Pino logging
-  fetch/                  # HTTP client with Chrome TLS fingerprinting
+  fetch/                  # HTTP client with browser impersonation
     http-client.ts        #   Low-level HTTP via httpcloak
     http-fetch.ts         #   High-level fetch orchestrator
     content-validator.ts  #   Response validation (challenge pages, content types)
