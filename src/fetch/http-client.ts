@@ -291,6 +291,32 @@ export interface HttpResponse {
   error?: string;
 }
 
+/** Dispatch a request using the appropriate HTTP method. */
+function dispatchRequest(
+  session: httpcloak.Session,
+  method: 'GET' | 'POST',
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, string> | undefined
+): Promise<httpcloak.Response> {
+  if (method === 'POST') {
+    return session.post(url, { headers, body });
+  }
+  return session.get(url, { headers });
+}
+
+/** Create a timeout promise that rejects after REQUEST_TIMEOUT_MS. */
+function createRequestTimeout(url: string): { promise: Promise<never>; cancel: () => void } {
+  let timeoutId: NodeJS.Timeout;
+  const promise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms for ${url}`)),
+      REQUEST_TIMEOUT_MS
+    );
+  });
+  return { promise, cancel: () => clearTimeout(timeoutId) };
+}
+
 /**
  * Internal HTTP request handler shared by httpRequest() and httpPost().
  * Handles SSRF validation, session management, timeout, response parsing, and size limits.
@@ -314,22 +340,45 @@ async function httpRequestInternal(
     const session = await getSession(preset);
     sessionMetadata = sessionCache.get(cacheKey);
 
-    logger.debug({ url, method, headers }, 'Making httpcloak request');
+    // Merge caller headers with cache-busting defaults.
+    // Cache-Control: no-cache prevents CDNs from returning 304 Not Modified,
+    // which would leave us with an empty body we can't extract content from.
+    const mergedHeaders: Record<string, string> = {
+      'Cache-Control': 'no-cache',
+      ...headers,
+    };
 
-    // Wrap session call with timeout to prevent indefinite hangs
-    let timeoutId: NodeJS.Timeout | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms for ${url}`)),
-        REQUEST_TIMEOUT_MS
-      );
-    });
+    logger.debug({ url, method, headers: mergedHeaders }, 'Making httpcloak request');
+
+    let timeout = createRequestTimeout(url);
 
     try {
-      const requestPromise =
-        method === 'POST' ? session.post(url, { headers, body }) : session.get(url, headers);
+      let response = await Promise.race([
+        dispatchRequest(session, method, url, mergedHeaders, body),
+        timeout.promise,
+      ]);
 
-      const response = await Promise.race([requestPromise, timeoutPromise]);
+      // HTTP 304 means the server thinks we have cached content, but we don't
+      // maintain a cache. Retry once with a fresh session to clear any
+      // accumulated state in httpcloak's native layer.
+      if (response.statusCode === 304) {
+        logger.info({ url }, 'Received 304 Not Modified, retrying with fresh session');
+        timeout.cancel();
+
+        const freshSession = new httpcloak.Session({
+          preset: preset ?? DEFAULT_PRESET,
+          timeout: SESSION_TIMEOUT_SEC,
+        });
+        timeout = createRequestTimeout(url);
+        try {
+          response = await Promise.race([
+            dispatchRequest(freshSession, method, url, mergedHeaders, body),
+            timeout.promise,
+          ]);
+        } finally {
+          freshSession.close();
+        }
+      }
 
       // DNS rebinding protection: re-validate SSRF after connection
       // This catches attacks where DNS resolves to a private IP after the initial check.
@@ -416,8 +465,7 @@ async function httpRequestInternal(
         error: String(error),
       };
     } finally {
-      // Clear timeout to prevent timer leak
-      if (timeoutId) clearTimeout(timeoutId);
+      timeout.cancel();
     }
   } catch (error) {
     // Handle SSRF validation failures and session creation failures

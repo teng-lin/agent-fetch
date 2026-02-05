@@ -348,7 +348,49 @@ describe('fetch/http-client', () => {
       });
 
       await httpRequest('https://example.com/page', { 'X-Custom': 'value' });
-      expect(mockGet).toHaveBeenCalledWith('https://example.com/page', { 'X-Custom': 'value' });
+      expect(mockGet).toHaveBeenCalledWith('https://example.com/page', {
+        headers: { 'Cache-Control': 'no-cache', 'X-Custom': 'value' },
+      });
+    });
+
+    it('retries with fresh session on 304 Not Modified', async () => {
+      mockGet
+        .mockResolvedValueOnce({
+          ok: true,
+          statusCode: 304,
+          text: '',
+          headers: {},
+          cookies: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          statusCode: 200,
+          text: '<html>Full content</html>',
+          headers: {},
+          cookies: [],
+        });
+
+      const result = await httpRequest('https://example.com/page');
+      expect(result.success).toBe(true);
+      expect(result.statusCode).toBe(200);
+      expect(result.html).toBe('<html>Full content</html>');
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockClose).toHaveBeenCalled(); // fresh session closed
+    });
+
+    it('returns 304 result when retry also gets 304', async () => {
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 304,
+        text: '',
+        headers: {},
+        cookies: [],
+      });
+
+      const result = await httpRequest('https://example.com/page');
+      expect(result.success).toBe(true); // ok is true for 304 (< 400)
+      expect(result.statusCode).toBe(304);
+      expect(mockGet).toHaveBeenCalledTimes(2);
     });
 
     it('accepts firefox browser type', async () => {
@@ -429,7 +471,10 @@ describe('fetch/http-client', () => {
       });
 
       expect(mockPost).toHaveBeenCalledWith('https://example.com/wp-admin/admin-ajax.php', {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: { action: 'fetch_content', 'data[id]': 'uuid-here' },
       });
     });
@@ -451,6 +496,7 @@ describe('fetch/http-client', () => {
 
       expect(mockPost).toHaveBeenCalledWith('https://example.com/wp-admin/admin-ajax.php', {
         headers: {
+          'Cache-Control': 'no-cache',
           'Content-Type': 'application/x-www-form-urlencoded',
           'X-Custom': 'value',
         },
