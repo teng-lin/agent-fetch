@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-02-05
+
 ### Added
 
 - CLI `--version` / `-v` flag to display package version
 - CLI warns on unknown flags instead of silently ignoring them
+- Configurable request timeout with `--timeout <ms>` flag (default: 20s)
+
+### Fixed
+
+- Prevent pino-pretty crash when running via npx by moving to dependencies and adding availability check
 
 ## [0.1.3] - 2026-02-05
 
@@ -64,7 +71,8 @@ Initial release.
 - Site-specific configuration via `AGENT_FETCH_SITES_JSON`
 - E2E test framework with SQLite database recording
 
-[Unreleased]: https://github.com/teng-lin/agent-fetch/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/teng-lin/agent-fetch/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/teng-lin/agent-fetch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/teng-lin/agent-fetch/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/teng-lin/agent-fetch/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/teng-lin/agent-fetch/compare/v0.1.0...v0.1.1
