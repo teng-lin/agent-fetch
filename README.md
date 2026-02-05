@@ -63,6 +63,9 @@ npx agent-fetch https://example.com/article --text
 
 # Raw HTML (no extraction)
 npx agent-fetch https://example.com/article --raw
+
+# Show version
+npx agent-fetch --version
 ```
 
 **Default output:**

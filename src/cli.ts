@@ -3,9 +3,24 @@
  * CLI entry point for agent-fetch
  */
 import { fileURLToPath } from 'url';
-import { realpathSync } from 'fs';
+import { realpathSync, readFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { httpFetch } from './fetch/http-fetch.js';
 import { httpRequest, closeAllSessions } from './fetch/http-client.js';
+
+/** Read version from package.json */
+function getVersion(): string {
+  const srcDir = dirname(fileURLToPath(import.meta.url));
+  const pkgPath = join(srcDir, '..', 'package.json');
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string };
+    return pkg.version ?? 'unknown';
+  } catch (error) {
+    // Log for debugging but don't fail - 'unknown' is a safe fallback
+    console.debug('Failed to read version from package.json:', error);
+    return 'unknown';
+  }
+}
 
 interface CliOptions {
   url: string;
@@ -17,12 +32,14 @@ interface CliOptions {
 }
 
 type ParseResult =
-  | { kind: 'ok'; opts: CliOptions }
+  | { kind: 'ok'; opts: CliOptions; warnings: string[] }
   | { kind: 'help' }
+  | { kind: 'version' }
   | { kind: 'error'; message: string };
 
 export function parseArgs(args: string[]): ParseResult {
   const positional: string[] = [];
+  const warnings: string[] = [];
   let json = false;
   let raw = false;
   let quiet = false;
@@ -31,15 +48,40 @@ export function parseArgs(args: string[]): ParseResult {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--json') json = true;
-    else if (arg === '--raw') raw = true;
-    else if (arg === '-q' || arg === '--quiet') quiet = true;
-    else if (arg === '--text') text = true;
-    else if (arg === '--help' || arg === '-h') return { kind: 'help' };
-    else if (arg === '--preset') {
-      if (i + 1 >= args.length) return { kind: 'error', message: '--preset requires a value' };
-      preset = args[++i];
-    } else if (!arg.startsWith('-')) positional.push(arg);
+
+    switch (arg) {
+      case '--json':
+        json = true;
+        break;
+      case '--raw':
+        raw = true;
+        break;
+      case '-q':
+      case '--quiet':
+        quiet = true;
+        break;
+      case '--text':
+        text = true;
+        break;
+      case '-h':
+      case '--help':
+        return { kind: 'help' };
+      case '-v':
+      case '--version':
+        return { kind: 'version' };
+      case '--preset':
+        if (i + 1 >= args.length) {
+          return { kind: 'error', message: '--preset requires a value' };
+        }
+        preset = args[++i];
+        break;
+      default:
+        if (arg.startsWith('-')) {
+          warnings.push(`Unknown option: ${arg}`);
+        } else {
+          positional.push(arg);
+        }
+    }
   }
 
   if (positional.length === 0) {
@@ -48,14 +90,8 @@ export function parseArgs(args: string[]): ParseResult {
 
   return {
     kind: 'ok',
-    opts: {
-      url: positional[0],
-      json,
-      raw,
-      quiet,
-      text,
-      preset,
-    },
+    opts: { url: positional[0], json, raw, quiet, text, preset },
+    warnings,
   };
 }
 
@@ -70,6 +106,7 @@ Options:
   -q, --quiet         Markdown content only (no metadata)
   --text              Plain text content only (no metadata, no markdown)
   --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
+  -v, --version       Show version number
   -h, --help          Show this help message
 
 Disclaimer:
@@ -80,13 +117,27 @@ Disclaimer:
 export async function main(): Promise<void> {
   const result = parseArgs(process.argv.slice(2));
 
-  if (result.kind !== 'ok') {
-    if (result.kind === 'error') console.error(`Error: ${result.message}`);
-    printUsage();
-    process.exit(result.kind === 'help' ? 0 : 1);
+  switch (result.kind) {
+    case 'version':
+      console.log(`agent-fetch ${getVersion()}`);
+      process.exit(0);
+      break;
+    case 'help':
+      printUsage();
+      process.exit(0);
+      break;
+    case 'error':
+      console.error(`Error: ${result.message}`);
+      printUsage();
+      process.exit(1);
+      break;
   }
 
-  const opts = result.opts;
+  const { opts, warnings } = result;
+
+  for (const warning of warnings) {
+    console.error(`Warning: ${warning}`);
+  }
 
   try {
     // --raw mode: fetch HTML without extraction

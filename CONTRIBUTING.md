@@ -82,8 +82,11 @@ Options:
   -q, --quiet         Markdown content only (no metadata)
   --text              Plain text only
   --preset <value>    TLS preset (chrome-143, android-chrome-143, ios-safari-18)
+  -v, --version       Show version number
   -h, --help          Show help
 ```
+
+Unknown flags will print a warning to stderr but still proceed with the request.
 
 ## Extraction Pipeline
 

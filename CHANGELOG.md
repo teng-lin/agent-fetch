@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CLI `--version` / `-v` flag to display package version
+- CLI warns on unknown flags instead of silently ignoring them
+
 ## [0.1.3] - 2026-02-05
 
 ### Fixed

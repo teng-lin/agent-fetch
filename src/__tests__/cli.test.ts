@@ -58,6 +58,16 @@ describe('CLI parseArgs', () => {
     expect(result.kind).toBe('help');
   });
 
+  it('returns version on --version', () => {
+    const result = parseArgs(['--version']);
+    expect(result.kind).toBe('version');
+  });
+
+  it('returns version on -v', () => {
+    const result = parseArgs(['-v']);
+    expect(result.kind).toBe('version');
+  });
+
   it('returns error when URL is missing', () => {
     const result = parseArgs([]);
     expect(result.kind).toBe('error');
@@ -82,11 +92,21 @@ describe('CLI parseArgs', () => {
     }
   });
 
-  it('ignores unknown flags', () => {
-    const result = parseArgs(['https://example.com', '--unknown']);
+  it('collects warnings for unknown flags', () => {
+    const result = parseArgs(['https://example.com', '--unknown', '--foo']);
     expect(result.kind).toBe('ok');
     if (result.kind === 'ok') {
       expect(result.opts.url).toBe('https://example.com');
+      expect(result.warnings).toContain('Unknown option: --unknown');
+      expect(result.warnings).toContain('Unknown option: --foo');
+    }
+  });
+
+  it('returns empty warnings array when no unknown flags', () => {
+    const result = parseArgs(['https://example.com', '--json']);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.warnings).toEqual([]);
     }
   });
 
