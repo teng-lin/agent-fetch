@@ -18,6 +18,11 @@ export type MediaElement =
   | { type: 'video'; src: string; provider?: string }
   | { type: 'audio'; src: string };
 
+export interface SelectorOptions {
+  targetSelector?: string | string[];
+  removeSelector?: string | string[];
+}
+
 export interface ExtractionResult {
   title: string | null;
   byline: string | null;

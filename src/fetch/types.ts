@@ -58,6 +58,12 @@ export interface FetchResult {
   suggestedAction?: 'retry_with_extract' | 'wait_and_retry' | 'skip';
   hint?: string;
 
+  // Selector metadata (when --select or --remove was applied)
+  selectors?: {
+    targetSelector?: string | string[];
+    removeSelector?: string | string[];
+  };
+
   // E2E recording fields
   statusCode?: number | null; // HTTP response status (200, 403, 429, etc.)
   rawHtml?: string | null; // Raw HTML response body

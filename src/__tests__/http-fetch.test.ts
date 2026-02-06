@@ -26,6 +26,12 @@ vi.mock('../sites/site-config.js', () => ({
   siteUseNextData: vi.fn().mockReturnValue(false),
 }));
 
+vi.mock('../extract/pdf-extractor.js', () => ({
+  isPdfUrl: vi.fn().mockReturnValue(false),
+  fetchRemotePdfBuffer: vi.fn(),
+  extractPdfFromBuffer: vi.fn(),
+}));
+
 vi.mock('../logger.js', () => ({
   logger: {
     info: vi.fn(),
@@ -48,6 +54,7 @@ import {
   siteUseWpRestApi,
   getSiteWpJsonApiPath,
 } from '../sites/site-config.js';
+import { isPdfUrl, fetchRemotePdfBuffer, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
 
 describe('httpFetch', () => {
   beforeEach(() => {
@@ -1157,5 +1164,184 @@ describe('Next.js data route fallback', () => {
 
     expect(result.success).toBe(true);
     expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  describe('PDF URL detection', () => {
+    it('delegates PDF URLs to fetchRemotePdfBuffer and extractPdfFromBuffer', async () => {
+      const url = 'https://example.com/report.pdf';
+      vi.mocked(isPdfUrl).mockReturnValue(true);
+      vi.mocked(fetchRemotePdfBuffer).mockResolvedValue({
+        buffer: Buffer.from('fake-pdf'),
+        statusCode: 200,
+      });
+      vi.mocked(extractPdfFromBuffer).mockResolvedValue({
+        success: true,
+        url,
+        latencyMs: 50,
+        content: 'PDF text',
+        textContent: 'PDF text',
+        markdown: 'PDF text',
+        extractedWordCount: 2,
+        statusCode: 200,
+        rawHtml: null,
+        extractionMethod: 'pdf-parse',
+      });
+
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.extractionMethod).toBe('pdf-parse');
+      expect(fetchRemotePdfBuffer).toHaveBeenCalledWith(url, undefined, undefined);
+      expect(extractPdfFromBuffer).toHaveBeenCalledWith(Buffer.from('fake-pdf'), url, 200);
+      expect(httpRequest).not.toHaveBeenCalled();
+    });
+
+    it('returns failure when PDF fetch fails', async () => {
+      const url = 'https://example.com/broken.pdf';
+      vi.mocked(isPdfUrl).mockReturnValue(true);
+      vi.mocked(fetchRemotePdfBuffer).mockResolvedValue(null);
+
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('pdf_fetch_failed');
+      expect(httpRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('selector pass-through', () => {
+    it('passes targetSelector and removeSelector to extractFromHtml', async () => {
+      const url = 'https://example.com/page';
+      const mockHtml = '<html><body><article>Content</article></body></html>';
+
+      vi.mocked(isPdfUrl).mockReturnValue(false);
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: mockHtml,
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValue({
+        title: 'Test',
+        content: '<article>Content</article>',
+        textContent: 'Content text. '.repeat(20),
+        excerpt: 'Content',
+        method: 'readability',
+      });
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      await httpFetch(url, {
+        targetSelector: 'article',
+        removeSelector: 'nav,.ads',
+      });
+
+      expect(extractFromHtml).toHaveBeenCalledWith(mockHtml, url, {
+        targetSelector: 'article',
+        removeSelector: 'nav,.ads',
+      });
+    });
+
+    it('includes selector metadata in result', async () => {
+      const url = 'https://example.com/page';
+      const mockHtml = '<html><body>Content</body></html>';
+
+      vi.mocked(isPdfUrl).mockReturnValue(false);
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: mockHtml,
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValue({
+        title: 'Test',
+        content: 'Content',
+        textContent: 'Content text. '.repeat(20),
+        excerpt: 'Content',
+        method: 'readability',
+      });
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      const result = await httpFetch(url, {
+        targetSelector: 'main',
+        removeSelector: 'footer',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.selectors).toEqual({
+        targetSelector: 'main',
+        removeSelector: 'footer',
+      });
+    });
+  });
+
+  describe('includeRawHtml option', () => {
+    it('includes raw HTML when includeRawHtml is true', async () => {
+      const url = 'https://example.com/page';
+      const mockHtml = '<html><body>Full HTML</body></html>';
+
+      vi.mocked(isPdfUrl).mockReturnValue(false);
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: mockHtml,
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValue({
+        title: 'Test',
+        content: 'Content',
+        textContent: 'Content text. '.repeat(20),
+        excerpt: 'Content',
+        method: 'readability',
+      });
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      const result = await httpFetch(url, { includeRawHtml: true });
+
+      expect(result.success).toBe(true);
+      expect(result.rawHtml).toBe(mockHtml);
+    });
+
+    it('excludes raw HTML by default', async () => {
+      const url = 'https://example.com/page';
+
+      vi.mocked(isPdfUrl).mockReturnValue(false);
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: '<html><body>Content</body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+      vi.mocked(quickValidate).mockReturnValue({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValue({
+        title: 'Test',
+        content: 'Content',
+        textContent: 'Content text. '.repeat(20),
+        excerpt: 'Content',
+        method: 'readability',
+      });
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.rawHtml).toBeNull();
+    });
   });
 });

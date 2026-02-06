@@ -22,10 +22,11 @@ import {
   buildPrismContentApiUrl,
   parseArcAnsContent,
 } from '../extract/prism-content-api.js';
+import { isPdfUrl, fetchRemotePdfBuffer, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
 import { detectWpAjaxContent, parseWpAjaxResponse } from '../extract/wp-ajax-content.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
-import type { ExtractionResult } from '../extract/types.js';
+import type { ExtractionResult, SelectorOptions } from '../extract/types.js';
 import type { FetchResult, ValidationError } from './types.js';
 import { parseHTML } from 'linkedom';
 import { GOOD_CONTENT_LENGTH } from '../extract/types.js';
@@ -691,7 +692,7 @@ function retryDelay(attempt: number): number {
 /**
  * Options for httpFetch
  */
-export interface HttpFetchOptions {
+export interface HttpFetchOptions extends SelectorOptions {
   /**
    * HTTP Cloak TLS preset (e.g. 'chrome-143', 'android-chrome-143', 'ios-safari-18')
    * If not provided, automatically resolved from User-Agent or defaults to Chrome.
@@ -701,6 +702,11 @@ export interface HttpFetchOptions {
    * Request timeout in milliseconds. Default: 20000 (20 seconds)
    */
   timeout?: number;
+  /**
+   * Include raw HTML in the result. Used by the crawler for link extraction.
+   * When false (default), rawHtml is only included if RECORD_HTML env var is set.
+   */
+  includeRawHtml?: boolean;
 }
 
 export async function httpFetch(url: string, options: HttpFetchOptions = {}): Promise<FetchResult> {
@@ -709,8 +715,28 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
   // Use provided preset or resolve from UA
   const preset = options.preset ?? resolvePreset(getSiteUserAgent(url));
   const timeout = options.timeout;
+  const keepRawHtml = options.includeRawHtml || process.env.RECORD_HTML === 'true';
+  const selectorOpts: SelectorOptions | undefined =
+    options.targetSelector || options.removeSelector
+      ? { targetSelector: options.targetSelector, removeSelector: options.removeSelector }
+      : undefined;
 
   try {
+    // PDF detection: if URL looks like a PDF, fetch as binary and extract
+    if (isPdfUrl(url)) {
+      logger.info({ url }, 'Detected PDF URL, fetching as binary');
+      const pdfResult = await fetchRemotePdfBuffer(url, preset, timeout);
+      if (pdfResult) {
+        return extractPdfFromBuffer(pdfResult.buffer, url, pdfResult.statusCode);
+      }
+      return failResult(url, startTime, {
+        error: 'pdf_fetch_failed',
+        errorDetails: { type: 'remote_pdf' },
+        suggestedAction: 'skip',
+        hint: 'Failed to download PDF',
+      });
+    }
+
     // Optimization: Try WP REST API first for configured sites (skip HTML fetch)
     // This avoids the overhead of fetching HTML when we know the site has WP API
     if (siteUseWpRestApi(url)) {
@@ -796,7 +822,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       // Try Next.js data extraction and WP REST API for insufficient content
       if (validation.error === 'insufficient_content') {
         const nextDataFallback = tryNextDataFallback(response.html, url, startTime, response);
-        if (nextDataFallback) return nextDataFallback;
+        if (nextDataFallback) {
+          if (keepRawHtml) nextDataFallback.rawHtml = response.html;
+          return nextDataFallback;
+        }
 
         const wpFallback = await tryWpRestApiFallback(
           response.html,
@@ -807,7 +836,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           preset,
           timeout
         );
-        if (wpFallback) return wpFallback;
+        if (wpFallback) {
+          if (keepRawHtml) wpFallback.rawHtml = response.html;
+          return wpFallback;
+        }
 
         const prismFallback = await tryPrismContentApiFallback(
           response.html,
@@ -817,7 +849,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           preset,
           timeout
         );
-        if (prismFallback) return prismFallback;
+        if (prismFallback) {
+          if (keepRawHtml) prismFallback.rawHtml = response.html;
+          return prismFallback;
+        }
 
         const wpAjaxFallback = await tryWpAjaxContentFallback(
           response.html,
@@ -828,7 +863,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           preset,
           timeout
         );
-        if (wpAjaxFallback) return wpAjaxFallback;
+        if (wpAjaxFallback) {
+          if (keepRawHtml) wpAjaxFallback.rawHtml = response.html;
+          return wpAjaxFallback;
+        }
       }
 
       return failResult(
@@ -852,7 +890,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         // Compare against DOM extraction to detect silently truncated API responses.
         // Some WordPress sites serve only a teaser via their REST API while the
         // full article is present in the rendered HTML.
-        const domResult = extractFromHtml(response.html, url);
+        const domResult = extractFromHtml(response.html, url, selectorOpts);
         const wpLen = wpResult.textContent?.length ?? 0;
         const domLen = domResult?.textContent?.length ?? 0;
 
@@ -867,7 +905,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           );
           return successResult(url, startTime, enrichWpMetadata(domResult, wpResult), {
             statusCode: response.statusCode,
-            rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+            rawHtml: keepRawHtml ? response.html : null,
             extractionMethod: domResult.method ?? null,
           });
         }
@@ -875,7 +913,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         logger.info({ url, apiUrl: wpApiUrl }, 'Extracted content from WP REST API');
         return successResult(url, startTime, wpResult, {
           statusCode: response.statusCode,
-          rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+          rawHtml: keepRawHtml ? response.html : null,
           extractionMethod: 'wp-rest-api',
         });
       }
@@ -890,10 +928,13 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       preset,
       timeout
     );
-    if (prismResult) return prismResult;
+    if (prismResult) {
+      if (keepRawHtml) prismResult.rawHtml = response.html;
+      return prismResult;
+    }
 
     // Extract content using DOM-based strategies
-    const extracted = extractFromHtml(response.html, url);
+    const extracted = extractFromHtml(response.html, url, selectorOpts);
 
     if (!extracted) {
       return failResult(
@@ -921,7 +962,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         preset,
         timeout
       );
-      if (wpAjaxResult) return wpAjaxResult;
+      if (wpAjaxResult) {
+        if (keepRawHtml) wpAjaxResult.rawHtml = response.html;
+        return wpAjaxResult;
+      }
 
       const wordCount = extracted.textContent ? extracted.textContent.split(/\s+/).length : 0;
       return failResult(
@@ -948,7 +992,10 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         preset,
         timeout
       );
-      if (dataRouteResult) return dataRouteResult;
+      if (dataRouteResult) {
+        if (keepRawHtml) dataRouteResult.rawHtml = response.html;
+        return dataRouteResult;
+      }
     }
 
     const latencyMs = Date.now() - startTime;
@@ -957,8 +1004,9 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     return successResult(url, startTime, extracted, {
       latencyMs,
       statusCode: response.statusCode,
-      rawHtml: process.env.RECORD_HTML === 'true' ? response.html : null,
+      rawHtml: keepRawHtml ? response.html : null,
       extractionMethod: extracted.method ?? null,
+      selectors: selectorOpts,
     });
   } catch (error) {
     logger.error({ url, error: String(error) }, 'HTTP fetch failed');

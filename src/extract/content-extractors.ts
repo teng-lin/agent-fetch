@@ -8,6 +8,7 @@ import unfluff from 'unfluff';
 import { extractContent } from '@wrtnlabs/web-content-extractor';
 import {
   type ExtractionResult,
+  type SelectorOptions,
   MIN_CONTENT_LENGTH,
   GOOD_CONTENT_LENGTH,
   DEFAULT_EXCERPT_LENGTH,
@@ -1068,12 +1069,71 @@ export function detectWpRestApi(document: Document, pageUrl: string): string | n
   return href;
 }
 
+/** Normalize a selector option to an array. */
+function toSelectorArray(sel: string | string[] | undefined): string[] {
+  if (!sel) return [];
+  return Array.isArray(sel) ? sel : [sel];
+}
+
+/**
+ * Apply user-provided CSS selectors to raw HTML before extraction.
+ * - removeSelector: removes matching elements from the DOM
+ * - targetSelector: replaces body with only matched elements (concatenated in document order)
+ * Returns the modified HTML string. If targetSelector matches nothing, returns original HTML with a warning.
+ */
+export function applySelectors(html: string, selectors: SelectorOptions): string {
+  const removes = toSelectorArray(selectors.removeSelector);
+  const targets = toSelectorArray(selectors.targetSelector);
+
+  if (removes.length === 0 && targets.length === 0) return html;
+
+  const { document } = parseHTML(html);
+
+  // Apply removeSelector first
+  for (const selector of removes) {
+    for (const el of document.querySelectorAll(selector)) {
+      el.remove();
+    }
+  }
+
+  // Apply targetSelector: keep only matched elements
+  if (targets.length > 0) {
+    const combined = targets.join(', ');
+    const matched = document.querySelectorAll(combined);
+
+    if (matched.length === 0) {
+      logger.warn(
+        { targetSelector: combined },
+        'targetSelector matched no elements, falling back to full document'
+      );
+    } else {
+      // Replace body content with matched elements in document order
+      const body = document.body ?? document.documentElement;
+      body.innerHTML = '';
+      for (const el of matched) {
+        body.appendChild(el.cloneNode(true));
+      }
+    }
+  }
+
+  return document.toString();
+}
+
 /**
  * Multi-strategy extraction from HTML
  * Exported for testing and direct HTML extraction use cases
  * Uses linkedom for DOM parsing (crash-resistant, no CSS parsing errors)
  */
-export function extractFromHtml(html: string, url: string): ExtractionResult | null {
+export function extractFromHtml(
+  html: string,
+  url: string,
+  selectors?: SelectorOptions
+): ExtractionResult | null {
+  // Apply user-provided selectors before extraction
+  if (selectors) {
+    html = applySelectors(html, selectors);
+  }
+
   const { document } = parseHTML(html);
 
   // Read publisher-declared schema.org access metadata from JSON-LD
@@ -1208,20 +1268,20 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   }
 
   // Fall back to minimum threshold candidates in priority order
-  const fallbackCandidates: [ExtractionResult | null, number][] = [
-    [effectiveReadability, MIN_CONTENT_LENGTH],
-    [rscResult, MIN_CONTENT_LENGTH],
-    [nuxtResult, MIN_CONTENT_LENGTH],
-    [reactRouterResult, MIN_CONTENT_LENGTH],
-    [nextDataResult, MIN_CONTENT_LENGTH],
-    [jsonLdResult, MIN_CONTENT_LENGTH],
-    [selectorResult, MIN_CONTENT_LENGTH],
-    [textDensityResult, MIN_CONTENT_LENGTH],
-    [unfluffResult, MIN_CONTENT_LENGTH],
+  const fallbackCandidates = [
+    effectiveReadability,
+    rscResult,
+    nuxtResult,
+    reactRouterResult,
+    nextDataResult,
+    jsonLdResult,
+    selectorResult,
+    textDensityResult,
+    unfluffResult,
   ];
 
-  for (const [result, threshold] of fallbackCandidates) {
-    if (meetsThreshold(result, threshold)) {
+  for (const result of fallbackCandidates) {
+    if (meetsThreshold(result, MIN_CONTENT_LENGTH)) {
       logger.debug({ url, method: result!.method }, 'Extraction succeeded');
       return finalizeResult(composeMetadata(result!, allResults, jsonLdMeta));
     }
