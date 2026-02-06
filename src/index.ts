@@ -14,4 +14,4 @@ export { getSiteConfig, getSiteUserAgent, getSiteReferer } from './sites/site-co
 export type { FetchResult, ValidationResult, ValidationError } from './fetch/types.js';
 export type { HttpFetchOptions } from './fetch/http-fetch.js';
 export type { HttpResponse } from './fetch/http-client.js';
-export type { ExtractionResult } from './extract/types.js';
+export type { ExtractionResult, MediaElement } from './extract/types.js';

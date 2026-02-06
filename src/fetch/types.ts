@@ -1,6 +1,7 @@
 /**
  * Shared types for the fetch module
  */
+import type { MediaElement } from '../extract/types.js';
 
 export type ValidationError =
   | 'http_status_error'
@@ -39,6 +40,13 @@ export interface FetchResult {
   isAccessibleForFree?: boolean;
   declaredWordCount?: number;
   extractedWordCount?: number;
+
+  /**
+   * Media elements found in extracted content, in document order.
+   * Includes images, documents (PDF, Office, etc.), and optionally video/audio.
+   * URLs are resolved to absolute.
+   */
+  media?: MediaElement[];
 
   // Error fields
   error?: string;

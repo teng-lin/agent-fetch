@@ -17,6 +17,7 @@ import { meetsThreshold } from './utils.js';
 import { sitePreferJsonLd, siteUseNextData, getSiteNextDataPath } from '../sites/site-config.js';
 import { tryNuxtPayloadExtraction } from './nuxt-payload.js';
 import { tryReactRouterHydrationExtraction } from './react-router-hydration.js';
+import { extractMedia } from './media-extractor.js';
 import { logger } from '../logger.js';
 
 // Selectors for finding published time
@@ -1079,11 +1080,23 @@ export function extractFromHtml(html: string, url: string): ExtractionResult | n
   const schemaOrgAccess = detectIsAccessibleForFree(document);
 
   /** Apply markdown conversion and attach schema.org access fields. */
+  /**
+   * Apply markdown conversion, attach schema.org access fields, and extract media.
+   * This runs once on the final winning extraction result (not multiple times).
+   * Media is extracted from the article content HTML, not the raw page HTML.
+   */
   function finalizeResult(result: ExtractionResult): ExtractionResult {
     const md = withMarkdown(result);
-    if (!schemaOrgAccess) return md;
+
+    // Extract media from the extracted content HTML
+    const media = result.content ? extractMedia(result.content, url) : undefined;
+
+    if (!schemaOrgAccess) {
+      return { ...md, media };
+    }
     return {
       ...md,
+      media,
       isAccessibleForFree: schemaOrgAccess.isAccessibleForFree,
       declaredWordCount: schemaOrgAccess.declaredWordCount,
     };

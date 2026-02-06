@@ -124,6 +124,7 @@ function successResult(
     isAccessibleForFree: extracted.isAccessibleForFree,
     declaredWordCount: extracted.declaredWordCount,
     extractedWordCount: countWords(extracted.textContent),
+    media: extracted.media,
     ...extras,
   };
 }

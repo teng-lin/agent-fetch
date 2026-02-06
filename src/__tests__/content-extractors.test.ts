@@ -1023,4 +1023,67 @@ describe('content-extractors', () => {
       expect(result!.declaredWordCount).toBe(800);
     });
   });
+
+  describe('media extraction integration', () => {
+    it('extracts media from extracted content', () => {
+      // This HTML is designed to reliably pass extraction:
+      // - Has <article> element (matches CONTENT_SELECTORS)
+      // - Has >500 chars of text content (exceeds GOOD_CONTENT_LENGTH)
+      // - Contains mixed media types in document order
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head><title>Test Article</title></head>
+        <body>
+          <article>
+            <h1>Test Article Title</h1>
+            <p>This is the first paragraph of our test article. It contains enough text to ensure
+            that the content extraction threshold is met. We need at least 500 characters of actual
+            content for the GOOD_CONTENT_LENGTH threshold, so this paragraph is intentionally verbose.</p>
+            <img src="/image1.jpg" alt="First image">
+            <p>The second paragraph continues with more content. This is important because the
+            extraction algorithms look for substantial text content to determine what is the main
+            article body versus navigation or sidebar content that should be excluded.</p>
+            <a href="/report.pdf">Download the Full Report</a>
+            <p>Here is a third paragraph with additional information about the topic being discussed.
+            The more text we have, the more confident the extraction will be that this is real article
+            content and not just boilerplate or template text from the page layout.</p>
+            <img src="/image2.png" alt="Second image">
+            <p>Finally, we have a fourth paragraph to round out the article. This ensures we have
+            plenty of content for the extraction to work with and gives us a realistic test case
+            that mirrors what actual web articles look like in terms of text-to-media ratio.</p>
+          </article>
+        </body>
+        </html>
+      `;
+
+      const result = extractFromHtml(html, 'https://example.com/article');
+
+      // Verify extraction succeeded
+      expect(result).not.toBeNull();
+      expect(result!.textContent!.length).toBeGreaterThan(500);
+
+      // Verify media extraction
+      expect(result!.media).toBeDefined();
+      expect(result!.media).toHaveLength(3);
+
+      // Verify order and content
+      expect(result!.media![0]).toEqual({
+        type: 'image',
+        src: 'https://example.com/image1.jpg',
+        alt: 'First image',
+      });
+      expect(result!.media![1]).toEqual({
+        type: 'document',
+        href: 'https://example.com/report.pdf',
+        text: 'Download the Full Report',
+        extension: '.pdf',
+      });
+      expect(result!.media![2]).toEqual({
+        type: 'image',
+        src: 'https://example.com/image2.png',
+        alt: 'Second image',
+      });
+    });
+  });
 });
