@@ -106,7 +106,7 @@ function loadSiteConfigs(): Record<string, SiteConfig> {
     const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
     return parseSiteConfigJson(raw);
   } catch (e) {
-    logger.warn({ configPath, error: String(e) }, 'Failed to load site configs');
+    logger.warn({ configPath, err: e }, 'Failed to load site configs');
     return {};
   }
 }
