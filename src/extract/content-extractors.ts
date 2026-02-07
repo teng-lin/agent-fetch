@@ -20,6 +20,7 @@ import { tryNuxtPayloadExtraction } from './nuxt-payload.js';
 import { tryReactRouterHydrationExtraction } from './react-router-hydration.js';
 import { extractMedia } from './media-extractor.js';
 import { logger } from '../logger.js';
+import { cleanExtractedHtml } from './content-cleanup.js';
 
 // Selectors for finding published time
 const PUBLISHED_TIME_SELECTORS = [
@@ -435,6 +436,20 @@ function composeMetadata(
 }
 
 const PLAIN_TEXT_METHODS = new Set(['unfluff', 'next-data', 'next-rsc']);
+
+/**
+ * Methods that skip post-extraction cleanup. These either produce plain text
+ * (no HTML to clean) or reconstruct HTML from structured API data that won't
+ * contain DOM-based noise like figcaptions, preview duplicates, or UI boilerplate.
+ */
+const SKIP_CLEANUP_METHODS = new Set([
+  ...PLAIN_TEXT_METHODS,
+  'json-ld',
+  'nuxt-payload',
+  'react-router-hydration',
+  'wp-ajax-content',
+  'prism-content-api',
+]);
 
 /**
  * Populate the `markdown` field on an ExtractionResult.
@@ -1139,17 +1154,27 @@ export function extractFromHtml(
   // Read publisher-declared schema.org access metadata from JSON-LD
   const schemaOrgAccess = detectIsAccessibleForFree(document);
 
-  /** Apply markdown conversion and attach schema.org access fields. */
   /**
-   * Apply markdown conversion, attach schema.org access fields, and extract media.
+   * Apply content cleanup, markdown conversion, schema.org access fields, and media extraction.
    * This runs once on the final winning extraction result (not multiple times).
    * Media is extracted from the article content HTML, not the raw page HTML.
    */
   function finalizeResult(result: ExtractionResult): ExtractionResult {
-    const md = withMarkdown(result);
+    // Run post-extraction cleanup on HTML-based methods
+    let cleaned = result;
+    if (result.content && !SKIP_CLEANUP_METHODS.has(result.method)) {
+      try {
+        const out = cleanExtractedHtml(result.content);
+        cleaned = { ...result, content: out.html, textContent: out.textContent };
+      } catch (e) {
+        logger.debug({ url, method: result.method, error: String(e) }, 'Content cleanup failed');
+      }
+    }
+
+    const md = withMarkdown(cleaned);
 
     // Extract media from the extracted content HTML
-    const media = result.content ? extractMedia(result.content, url) : undefined;
+    const media = cleaned.content ? extractMedia(cleaned.content, url) : undefined;
 
     if (!schemaOrgAccess) {
       return { ...md, media };
