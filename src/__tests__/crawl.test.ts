@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { parseRobotsTxt, isAllowedByRobots } from '../crawl/robots-parser.js';
-import { parseSitemapXml } from '../crawl/sitemap-parser.js';
+import { parseSitemapXml, fetchSitemapEntries } from '../crawl/sitemap-parser.js';
 import { extractLinks } from '../crawl/link-extractor.js';
 import { UrlFrontier, normalizeUrl } from '../crawl/url-frontier.js';
 import { parseCrawlArgs } from '../cli.js';
@@ -171,6 +171,31 @@ describe('sitemap-parser', () => {
       expect(entries).toHaveLength(5);
     });
   });
+
+  describe('fetchSitemapEntries', () => {
+    it('rejects cross-origin nested sitemaps', async () => {
+      const sameOriginSitemap = `<?xml version="1.0"?>
+<urlset><url><loc>https://example.com/page1</loc></url></urlset>`;
+
+      const indexXml = `<?xml version="1.0"?>
+<sitemapindex>
+  <sitemap><loc>https://example.com/sitemap-ok.xml</loc></sitemap>
+  <sitemap><loc>https://evil.example.com/sitemap-steal.xml</loc></sitemap>
+</sitemapindex>`;
+
+      const fetchFn = vi.fn(async (url: string) => {
+        if (url.includes('sitemap-index')) return { ok: true, text: indexXml };
+        if (url.includes('sitemap-ok')) return { ok: true, text: sameOriginSitemap };
+        return null;
+      });
+
+      const entries = await fetchSitemapEntries(['https://example.com/sitemap-index.xml'], fetchFn);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].loc).toBe('https://example.com/page1');
+      expect(fetchFn).not.toHaveBeenCalledWith('https://evil.example.com/sitemap-steal.xml');
+    });
+  });
 });
 
 describe('link-extractor', () => {
@@ -263,13 +288,13 @@ describe('url-frontier', () => {
 
     it('enforces same-origin', () => {
       const frontier = new UrlFrontier('https://example.com/', { sameOrigin: true });
-      const added = frontier.add('https://other.com/page', 1);
+      const added = frontier.add('https://other.example.com/page', 1);
       expect(added).toBe(false);
     });
 
     it('allows cross-origin when disabled', () => {
       const frontier = new UrlFrontier('https://example.com/', { sameOrigin: false });
-      const added = frontier.add('https://other.com/page', 1);
+      const added = frontier.add('https://other.example.com/page', 1);
       expect(added).toBe(true);
     });
 
@@ -327,17 +352,33 @@ describe('url-frontier', () => {
       expect(frontier.processedCount).toBe(1);
     });
 
-    it('caps visited set and queue at maxQueued', () => {
+    it('caps queue at maxQueued', () => {
       const frontier = new UrlFrontier('https://example.com/', {
         maxPages: 5,
         maxQueued: 3,
         sameOrigin: false,
       });
 
-      // Start URL uses 1 slot
-      expect(frontier.add('https://a.com/1', 0)).toBe(true); // slot 2
-      expect(frontier.add('https://a.com/2', 0)).toBe(true); // slot 3 = maxQueued
-      expect(frontier.add('https://a.com/3', 0)).toBe(false); // over cap
+      // Start URL uses 1 queue slot
+      expect(frontier.add('https://a.example.com/1', 0)).toBe(true); // queue=2
+      expect(frontier.add('https://a.example.com/2', 0)).toBe(true); // queue=3 = maxQueued
+      expect(frontier.add('https://a.example.com/3', 0)).toBe(false); // over cap
+    });
+
+    it('allows new URLs after dequeuing frees queue space', () => {
+      const frontier = new UrlFrontier('https://example.com/', {
+        maxPages: 10,
+        maxQueued: 2,
+        sameOrigin: false,
+      });
+
+      // Queue is full: start URL + 1 more
+      expect(frontier.add('https://a.example.com/1', 0)).toBe(true); // queue=2
+      expect(frontier.add('https://a.example.com/2', 0)).toBe(false); // queue full
+
+      // Dequeue frees a slot
+      frontier.next();
+      expect(frontier.add('https://a.example.com/3', 0)).toBe(true); // queue has space now
     });
 
     it('defaults maxQueued to 10x maxPages', () => {
@@ -347,10 +388,10 @@ describe('url-frontier', () => {
       });
       // Default maxQueued = 2*10 = 20, so adding 19 more should work
       for (let i = 0; i < 19; i++) {
-        frontier.add(`https://a.com/${i}`, 0);
+        frontier.add(`https://a.example.com/${i}`, 0);
       }
-      // Total visited: 1 (start) + 19 = 20 = maxQueued
-      expect(frontier.add('https://a.com/overflow', 0)).toBe(false);
+      // Queue: 1 (start) + 19 = 20 = maxQueued
+      expect(frontier.add('https://a.example.com/overflow', 0)).toBe(false);
     });
   });
 });

@@ -74,7 +74,7 @@ export class UrlFrontier {
   /** Add a URL to the frontier if it passes all filters. */
   add(url: string, depth: number): boolean {
     if (depth > this.maxDepth) return false;
-    if (this.visited.size >= this.maxQueued) return false;
+    if (this.queue.length >= this.maxQueued) return false;
 
     const normalized = normalizeUrl(url);
     if (this.visited.has(normalized)) return false;
