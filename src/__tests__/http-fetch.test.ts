@@ -28,6 +28,7 @@ vi.mock('../sites/site-config.js', () => ({
 
 vi.mock('../extract/pdf-extractor.js', () => ({
   isPdfUrl: vi.fn().mockReturnValue(false),
+  isPdfContentType: vi.fn().mockReturnValue(false),
   fetchRemotePdfBuffer: vi.fn(),
   extractPdfFromBuffer: vi.fn(),
 }));
@@ -54,7 +55,12 @@ import {
   siteUseWpRestApi,
   getSiteWpJsonApiPath,
 } from '../sites/site-config.js';
-import { isPdfUrl, fetchRemotePdfBuffer, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
+import {
+  isPdfUrl,
+  isPdfContentType,
+  fetchRemotePdfBuffer,
+  extractPdfFromBuffer,
+} from '../extract/pdf-extractor.js';
 
 describe('httpFetch', () => {
   beforeEach(() => {
@@ -1298,6 +1304,43 @@ describe('Next.js data route fallback', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('pdf_fetch_failed');
       expect(httpRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PDF content-type detection', () => {
+    it('extracts PDF from response body when content-type is application/pdf', async () => {
+      const url = 'https://example.com/document';
+      const pdfBody = '%PDF-1.4 binary content';
+      vi.mocked(isPdfUrl).mockReturnValueOnce(false);
+      vi.mocked(isPdfContentType).mockReturnValueOnce(true);
+      vi.mocked(httpRequest).mockResolvedValue({
+        success: true,
+        statusCode: 200,
+        html: pdfBody,
+        headers: { 'content-type': 'application/pdf' },
+        cookies: [],
+      });
+      vi.mocked(extractPdfFromBuffer).mockResolvedValue({
+        success: true,
+        url,
+        latencyMs: 50,
+        content: 'PDF text',
+        textContent: 'PDF text',
+        markdown: 'PDF text',
+        extractedWordCount: 2,
+        statusCode: 200,
+        rawHtml: null,
+        extractionMethod: 'pdf-parse',
+      });
+      vi.mocked(getSiteUserAgent).mockReturnValue(null);
+      vi.mocked(getSiteReferer).mockReturnValue(null);
+
+      const result = await httpFetch(url);
+
+      expect(result.success).toBe(true);
+      expect(result.extractionMethod).toBe('pdf-parse');
+      expect(extractPdfFromBuffer).toHaveBeenCalledWith(Buffer.from(pdfBody, 'latin1'), url, 200);
+      expect(fetchRemotePdfBuffer).not.toHaveBeenCalled();
     });
   });
 

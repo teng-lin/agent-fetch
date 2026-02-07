@@ -22,7 +22,12 @@ import {
   buildPrismContentApiUrl,
   parseArcAnsContent,
 } from '../extract/prism-content-api.js';
-import { isPdfUrl, fetchRemotePdfBuffer, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
+import {
+  isPdfUrl,
+  isPdfContentType,
+  fetchRemotePdfBuffer,
+  extractPdfFromBuffer,
+} from '../extract/pdf-extractor.js';
 import { detectWpAjaxContent, parseWpAjaxResponse } from '../extract/wp-ajax-content.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
@@ -858,6 +863,18 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         },
         response.statusCode
       );
+    }
+
+    // PDF content-type detection: URL may not end in .pdf but response is a PDF.
+    // httpcloak returns the body as a latin1 string, so we can convert directly
+    // to a Buffer without re-fetching.
+    const responseContentType = Array.isArray(response.headers['content-type'])
+      ? response.headers['content-type'][0]
+      : response.headers['content-type'];
+    if (isPdfContentType(responseContentType)) {
+      logger.info({ url }, 'Detected PDF content-type in response, extracting as PDF');
+      const buffer = Buffer.from(response.html, 'latin1');
+      return extractPdfFromBuffer(buffer, url, response.statusCode);
     }
 
     // Validate content

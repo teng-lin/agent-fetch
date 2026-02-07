@@ -28,6 +28,18 @@ describe('quickValidate', () => {
     expect(result.error).toBe('wrong_content_type');
   });
 
+  it('accepts application/xhtml+xml content type', () => {
+    const xhtmlBody = `
+      <html xmlns="http://www.w3.org/1999/xhtml">
+        <body>
+          ${'Lorem ipsum dolor sit amet. '.repeat(200)}
+        </body>
+      </html>
+    `;
+    expect(quickValidate(xhtmlBody, 200, 'application/xhtml+xml').valid).toBe(true);
+    expect(quickValidate(xhtmlBody, 200, 'application/xhtml+xml; charset=utf-8').valid).toBe(true);
+  });
+
   it('fails with body too small', () => {
     const html = '<html><body>Short</body></html>';
     const result = quickValidate(html, 200, 'text/html');

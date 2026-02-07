@@ -33,16 +33,19 @@ export function quickValidate(
     };
   }
 
-  // Check 2: Content-Type (should be text/html)
+  // Check 2: Content-Type (should be text/html or application/xhtml+xml)
   if (contentType) {
     // Handle both string and array (HTTP headers can be arrays)
     const ctValue = Array.isArray(contentType) ? contentType[0] : contentType;
-    if (ctValue && !ctValue.toLowerCase().includes('text/html')) {
-      return {
-        valid: false,
-        error: 'wrong_content_type',
-        errorDetails: { contentType: ctValue },
-      };
+    if (ctValue) {
+      const ct = ctValue.toLowerCase();
+      if (!ct.includes('text/html') && !ct.includes('application/xhtml+xml')) {
+        return {
+          valid: false,
+          error: 'wrong_content_type',
+          errorDetails: { contentType: ctValue },
+        };
+      }
     }
   }
 
