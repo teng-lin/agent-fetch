@@ -53,7 +53,7 @@ export function sanitizeHtml(html: string): string {
   }
   for (const el of document.querySelectorAll('*')) {
     for (const attr of [...el.attributes]) {
-      if (/^on/i.test(attr.name) || /^javascript:/i.test(String(attr.value))) {
+      if (/^on/i.test(attr.name) || /^\s*javascript:/i.test(String(attr.value))) {
         el.removeAttribute(attr.name);
       }
     }

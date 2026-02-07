@@ -122,6 +122,11 @@ describe('extract/utils', () => {
       expect(result).not.toContain('javascript:');
     });
 
+    it('strips javascript: URIs with leading whitespace', () => {
+      const result = sanitizeHtml('<a href="  javascript:alert(1)">click</a>');
+      expect(result).not.toContain('javascript:');
+    });
+
     it('preserves safe content', () => {
       const html = '<p>Hello <strong>world</strong></p>';
       expect(sanitizeHtml(html)).toBe(html);
