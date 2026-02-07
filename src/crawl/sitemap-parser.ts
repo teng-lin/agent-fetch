@@ -21,6 +21,14 @@ function isHttpUrl(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
+function getOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function parseSitemapXml(
   xml: string,
   maxEntries: number = DEFAULT_MAX_SITEMAP_ENTRIES
@@ -43,8 +51,7 @@ export function parseSitemapXml(
     if (!loc || !isHttpUrl(loc)) continue;
 
     const lastmod = urlEl.querySelector('lastmod')?.textContent?.trim();
-    const priorityStr = urlEl.querySelector('priority')?.textContent?.trim();
-    const priority = priorityStr !== undefined ? parseFloat(priorityStr) : NaN;
+    const priority = parseFloat(urlEl.querySelector('priority')?.textContent?.trim() ?? '');
 
     entries.push({ loc, lastmod, priority: isNaN(priority) ? undefined : priority });
   }
@@ -72,6 +79,13 @@ export async function fetchSitemapEntries(
   const allEntries: SitemapEntry[] = [];
   const visited = new Set<string>();
 
+  // Collect allowed origins from the initial sitemap URLs
+  const allowedOrigins = new Set<string>();
+  for (const url of sitemapUrls) {
+    const origin = getOrigin(url);
+    if (origin) allowedOrigins.add(origin);
+  }
+
   async function fetchSitemap(url: string, depth: number): Promise<void> {
     if (depth > maxDepth || visited.has(url)) return;
     if (allEntries.length >= maxEntries) return;
@@ -88,6 +102,13 @@ export async function fetchSitemapEntries(
 
       for (const nestedUrl of nestedSitemaps) {
         if (allEntries.length >= maxEntries) break;
+
+        const nestedOrigin = getOrigin(nestedUrl);
+        if (!nestedOrigin || !allowedOrigins.has(nestedOrigin)) {
+          logger.debug({ nestedUrl, url }, 'Skipping cross-origin nested sitemap');
+          continue;
+        }
+
         await fetchSitemap(nestedUrl, depth + 1);
       }
 

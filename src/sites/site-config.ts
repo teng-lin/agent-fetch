@@ -9,6 +9,7 @@ import { dirname, join } from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
+import { logger } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(__dirname, '..', '..');
@@ -104,7 +105,8 @@ function loadSiteConfigs(): Record<string, SiteConfig> {
   try {
     const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
     return parseSiteConfigJson(raw);
-  } catch {
+  } catch (e) {
+    logger.warn({ configPath, error: String(e) }, 'Failed to load site configs');
     return {};
   }
 }
