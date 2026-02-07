@@ -147,6 +147,29 @@ describe('fetch/http-client', () => {
       await expect(validateSSRF('https://example.com')).rejects.toThrow('SSRF protection');
     });
 
+    it('throws for 2001:db8:: IPv6 documentation range (RFC 3849)', async () => {
+      mockDnsIPv6Only('2001:db8::1');
+      await expect(validateSSRF('https://example.com')).rejects.toThrow('SSRF protection');
+    });
+
+    it('throws for 100:: IPv6 discard range (RFC 6666)', async () => {
+      mockDnsIPv6Only('100::1');
+      await expect(validateSSRF('https://example.com')).rejects.toThrow('SSRF protection');
+    });
+
+    it('throws for bracketed IPv6 localhost literal', async () => {
+      await expect(validateSSRF('http://[::1]/')).rejects.toThrow('SSRF protection');
+    });
+
+    it('throws for bracketed IPv6 private literal', async () => {
+      await expect(validateSSRF('http://[fc00::1]/')).rejects.toThrow('SSRF protection');
+    });
+
+    it('allows bracketed IPv6 public literal', async () => {
+      const result = await validateSSRF('http://[2606:4700::1]/');
+      expect(result).toEqual(['2606:4700::1']);
+    });
+
     it('combines IPv4 and IPv6 results', async () => {
       vi.mocked(dns.resolve4).mockResolvedValue(['93.184.216.34']);
       vi.mocked(dns.resolve6).mockResolvedValue(['2606:2800:220:1:248:1893:25c8:1946']);
