@@ -88,10 +88,12 @@ Environment variables for filtering:
 Database query and management:
 
 ```bash
-npm run e2e:db:query -- --stats     # Per-URL pass/fail statistics
+npm run e2e:db:query -- --stats     # Per-site pass/fail statistics (grouped by default)
+npm run e2e:db:query -- --stats --no-group  # Per-URL stats (ungrouped)
 npm run e2e:db:query -- --overall   # Overall statistics across all runs
 npm run e2e:db:query -- --runs      # List test runs with metadata
 npm run e2e:db:query -- --quality   # Extraction quality analysis
-npm run e2e:db:compare              # Compare 2 most recent runs (regressions/fixes)
+npm run e2e:db:compare              # Compare 2 most recent runs (grouped by site)
+npm run e2e:db:compare -- --no-group  # Compare without site grouping
 npm run e2e:db:cleanup -- --before "30d"  # Delete runs older than 30 days
 ```

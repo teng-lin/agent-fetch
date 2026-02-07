@@ -2,40 +2,51 @@
 
 /**
  * E2E Database Query Tool
- * Usage: tsx scripts/e2e-db-query.ts [--stats | --overall | --runs | --quality]
+ * Usage: tsx scripts/e2e-db-query.ts [--stats | --overall | --runs | --quality] [--no-group]
  */
 
 import {
   getUrlStats,
+  getSiteStats,
   getOverallStats,
   getTestRuns,
   getQualityStats,
 } from '../src/__tests__/db-query.js';
 
-const VALID_FLAGS = ['--stats', '--overall', '--runs', '--quality'] as const;
-type Flag = (typeof VALID_FLAGS)[number];
+const MODE_FLAGS = ['--stats', '--overall', '--runs', '--quality'] as const;
+type ModeFlag = (typeof MODE_FLAGS)[number];
 
-function parseArgs(args: string[]): Set<Flag> {
-  const flags = new Set<Flag>();
+interface QueryArgs {
+  modes: Set<ModeFlag>;
+  noGroup: boolean;
+}
+
+function parseArgs(args: string[]): QueryArgs {
+  const modes = new Set<ModeFlag>();
+  let noGroup = false;
   for (const arg of args) {
-    if (VALID_FLAGS.includes(arg as Flag)) {
-      flags.add(arg as Flag);
+    if (MODE_FLAGS.includes(arg as ModeFlag)) {
+      modes.add(arg as ModeFlag);
+    } else if (arg === '--no-group') {
+      noGroup = true;
     }
   }
-  return flags;
+  return { modes, noGroup };
 }
 
 function showUsage(): void {
   console.log(`Usage: tsx scripts/e2e-db-query.ts [options]
 
 Options:
-  --stats     Show per-URL pass/fail statistics
+  --stats     Show per-site pass/fail statistics (grouped by default)
   --overall   Show overall statistics across all test runs
   --runs      Show test runs with environment metadata
   --quality   Show extraction quality analysis
+  --no-group  Show per-URL stats instead of grouped site stats (with --stats)
 
 Examples:
   tsx scripts/e2e-db-query.ts --stats
+  tsx scripts/e2e-db-query.ts --stats --no-group
   tsx scripts/e2e-db-query.ts --overall
   tsx scripts/e2e-db-query.ts --runs
   tsx scripts/e2e-db-query.ts --quality
@@ -62,7 +73,42 @@ function formatErrorColumn(stat: { most_common_error: string | null }): string {
   return '-';
 }
 
-async function formatStats(): Promise<void> {
+async function formatSiteStats(): Promise<void> {
+  const stats = await getSiteStats();
+
+  if (stats.length === 0) {
+    console.log('\n  No test data found.\n');
+    return;
+  }
+
+  console.log(`\nPer-Site Statistics (${stats.length} sites)\n`);
+  console.log(
+    '  Site                                   Stable  Latest  Pass/Total  Rate   Avg(ms)  AvgLen  Strategy      Error'
+  );
+  console.log('  ' + '-'.repeat(130));
+
+  for (const stat of stats) {
+    const site = fitColumn(stat.site, 40);
+    const stable = stat.stable_url ? '  ✓   ' : '  -   ';
+    const latest = stat.latest_url ? '  ✓   ' : '  -   ';
+    const passTotal = `${stat.passed}/${stat.total_tests}`.padEnd(11);
+    const rate = `${stat.pass_rate.toFixed(1)}%`.padEnd(6);
+    const avgMs = stat.avg_duration_ms
+      ? `${Math.round(stat.avg_duration_ms)}`.padEnd(8)
+      : '-'.padEnd(8);
+    const avgLen = formatBytes(stat.avg_content_length).padEnd(7);
+    const strategy = (stat.most_common_strategy || '-').padEnd(13);
+    const error = formatErrorColumn(stat);
+
+    console.log(
+      `  ${site}${stable}${latest}${passTotal}${rate}${avgMs}${avgLen}${strategy}${error}`
+    );
+  }
+
+  console.log('');
+}
+
+async function formatUrlStats(): Promise<void> {
   const stats = await getUrlStats();
 
   if (stats.length === 0) {
@@ -203,17 +249,23 @@ async function formatQuality(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const flags = parseArgs(process.argv.slice(2));
+  const { modes, noGroup } = parseArgs(process.argv.slice(2));
 
-  if (flags.size === 0) {
+  if (modes.size === 0) {
     showUsage();
     process.exit(0);
   }
 
-  if (flags.has('--stats')) await formatStats();
-  if (flags.has('--overall')) await formatOverall();
-  if (flags.has('--runs')) await formatRuns();
-  if (flags.has('--quality')) await formatQuality();
+  if (modes.has('--stats')) {
+    if (noGroup) {
+      await formatUrlStats();
+    } else {
+      await formatSiteStats();
+    }
+  }
+  if (modes.has('--overall')) await formatOverall();
+  if (modes.has('--runs')) await formatRuns();
+  if (modes.has('--quality')) await formatQuality();
 }
 
 main().catch((error) => {

@@ -124,6 +124,10 @@ export async function initializeDatabase(): Promise<void> {
     db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_run_id ON test_results(run_id);`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_url ON test_results(url);`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_test_name ON test_results(test_name);`);
+    db.run(
+      `CREATE INDEX IF NOT EXISTS idx_test_results_base_name ON test_results(REPLACE(test_name, ' (latest)', ''));`
+    );
 
     saveDatabaseToDisk();
   } else {
@@ -148,6 +152,10 @@ export async function initializeDatabase(): Promise<void> {
     db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_run_id ON test_results(run_id);`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_url ON test_results(url);`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_test_results_test_name ON test_results(test_name);`);
+    db.run(
+      `CREATE INDEX IF NOT EXISTS idx_test_results_base_name ON test_results(REPLACE(test_name, ' (latest)', ''));`
+    );
 
     // Migrate existing test_runs: add columns if they don't exist
     const columnsResult = db.exec('PRAGMA table_info(test_runs)');

@@ -72,6 +72,20 @@ interface OverallStats {
   unique_urls: number;
 }
 
+export interface SiteStats {
+  site: string;
+  stable_url: string | null;
+  latest_url: string | null;
+  total_tests: number;
+  passed: number;
+  failed: number;
+  pass_rate: number;
+  avg_duration_ms: number | null;
+  avg_content_length: number | null;
+  most_common_strategy: string | null;
+  most_common_error: string | null;
+}
+
 interface QualityStats {
   strategy_distribution: { strategy: string; count: number; avg_content_length: number | null }[];
   error_breakdown: { error_message: string; count: number; urls_affected: number }[];
@@ -123,6 +137,49 @@ export async function getUrlStats(): Promise<UrlStats[]> {
       ORDER BY total_tests DESC, pass_rate DESC
     `);
     return rowsToObjects<UrlStats>(result);
+  });
+}
+
+/**
+ * Get pass/fail statistics grouped by site name.
+ * Groups "SiteName" and "SiteName (latest)" into a single row.
+ */
+export async function getSiteStats(): Promise<SiteStats[]> {
+  return withDatabase([], (db) => {
+    const result = db.exec(`
+      SELECT
+        REPLACE(test_name, ' (latest)', '') as site,
+        MAX(CASE WHEN test_name NOT LIKE '% (latest)' THEN url END) as stable_url,
+        MAX(CASE WHEN test_name LIKE '% (latest)' THEN url END) as latest_url,
+        COUNT(*) as total_tests,
+        SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) as passed,
+        SUM(CASE WHEN status = 'fail' THEN 1 ELSE 0 END) as failed,
+        ROUND(100.0 * SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) / COUNT(*), 2) as pass_rate,
+        AVG(fetch_duration_ms) as avg_duration_ms,
+        AVG(content_length) as avg_content_length,
+        (
+          SELECT extract_strategy
+          FROM test_results t2
+          WHERE REPLACE(t2.test_name, ' (latest)', '') = REPLACE(t1.test_name, ' (latest)', '')
+            AND extract_strategy IS NOT NULL
+          GROUP BY extract_strategy
+          ORDER BY COUNT(*) DESC
+          LIMIT 1
+        ) as most_common_strategy,
+        (
+          SELECT error_message
+          FROM test_results t2
+          WHERE REPLACE(t2.test_name, ' (latest)', '') = REPLACE(t1.test_name, ' (latest)', '')
+            AND error_message IS NOT NULL
+          GROUP BY error_message
+          ORDER BY COUNT(*) DESC
+          LIMIT 1
+        ) as most_common_error
+      FROM test_results t1
+      GROUP BY REPLACE(test_name, ' (latest)', '')
+      ORDER BY total_tests DESC, pass_rate DESC
+    `);
+    return rowsToObjects<SiteStats>(result);
   });
 }
 
