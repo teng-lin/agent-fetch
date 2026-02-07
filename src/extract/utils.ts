@@ -42,7 +42,7 @@ export function countWords(text: string | null): number {
 export const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'] as const;
 
 /**
- * Remove dangerous elements, event handler attributes, and javascript: URIs from HTML.
+ * Remove dangerous elements, event handler attributes, and dangerous URI schemes from HTML.
  */
 export function sanitizeHtml(html: string): string {
   const { document } = parseHTML(`<div>${html}</div>`);
@@ -53,7 +53,7 @@ export function sanitizeHtml(html: string): string {
   }
   for (const el of document.querySelectorAll('*')) {
     for (const attr of [...el.attributes]) {
-      if (/^on/i.test(attr.name) || /^javascript:/i.test(String(attr.value))) {
+      if (/^on/i.test(attr.name) || /^\s*(javascript|vbscript|data):/i.test(String(attr.value))) {
         el.removeAttribute(attr.name);
       }
     }
