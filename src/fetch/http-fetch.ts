@@ -45,7 +45,7 @@ interface RequestContext {
 }
 
 // Minimum content length (chars) for successful extraction
-const MIN_CONTENT_LENGTH = 100;
+const MIN_EXTRACTION_LENGTH = 100;
 
 // Retry configuration for transient network errors
 const MAX_RETRIES = 2;
@@ -491,7 +491,7 @@ function tryNextDataFallback(
   try {
     const { document } = parseHTML(html);
     const result = tryNextDataExtraction(document, url);
-    if (!result || !result.textContent || result.textContent.length < MIN_CONTENT_LENGTH)
+    if (!result || !result.textContent || result.textContent.length < MIN_EXTRACTION_LENGTH)
       return null;
 
     logger.info({ url, method: 'next-data' }, 'Recovered content from Next.js data');
@@ -1014,7 +1014,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     }
 
     // Handle insufficient extracted content
-    if (!extracted.textContent || extracted.textContent.trim().length < MIN_CONTENT_LENGTH) {
+    if (!extracted.textContent || extracted.textContent.trim().length < MIN_EXTRACTION_LENGTH) {
       // Try WP AJAX fallback before giving up
       const wpAjaxResult = await tryWpAjaxContentFallback(
         response.html,

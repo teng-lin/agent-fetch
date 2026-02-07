@@ -1090,7 +1090,7 @@ describe('Next.js data route fallback', () => {
 
     vi.mocked(quickValidate).mockReturnValue({ valid: true });
 
-    // DOM extraction returns short content (above MIN_CONTENT_LENGTH=100 but below GOOD_CONTENT_LENGTH=500)
+    // DOM extraction returns short content (above MIN_EXTRACTION_LENGTH=100 but below GOOD_CONTENT_LENGTH=500)
     vi.mocked(extractFromHtml).mockReturnValue({
       title: 'Article Title',
       byline: null,

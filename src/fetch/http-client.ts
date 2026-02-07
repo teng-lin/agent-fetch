@@ -65,8 +65,9 @@ function isPrivateIP(ip: string): boolean {
     /^::$/, // :: - unspecified address (equivalent to 0.0.0.0)
     /^::1$/, // ::1 - localhost
     /^fe80:/i, // fe80::/10 - link-local
-    /^fc00:/i, // fc00::/7 - private
-    /^fd00:/i, // fd00::/8 - private
+    /^f[cd]/i, // fc00::/7 - unique local (fc00:: and fd00::)
+    /^2001:db8:/i, // 2001:db8::/32 - documentation (RFC 3849)
+    /^100::/i, // 100::/64 - discard (RFC 6666)
   ];
 
   // Handle IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
@@ -89,7 +90,11 @@ function isPrivateIP(ip: string): boolean {
  * httpRequest() directly.
  */
 export async function validateSSRF(url: string): Promise<string[]> {
-  const hostname = new URL(url).hostname;
+  const rawHostname = new URL(url).hostname;
+
+  // Strip IPv6 brackets — URL parser returns "[::1]" for IPv6 literals,
+  // but net.isIP requires the bare address without brackets.
+  const hostname = rawHostname.replace(/^\[|\]$/g, '');
 
   // If the hostname is already an IP address, validate it directly.
   // dns.resolve4/resolve6 return empty results for IP literals, which
@@ -375,12 +380,16 @@ export async function closeAllSessions(): Promise<void> {
   sessionCache.clear();
   sessionLocks.clear();
 
-  for (const metadata of metadataList) {
-    try {
+  const results = await Promise.allSettled(
+    metadataList.map(async (metadata) => {
       const session = await metadata.promise;
       session.close();
-    } catch (error) {
-      logger.warn({ error: String(error) }, 'Error closing httpcloak session');
+    })
+  );
+
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      logger.warn({ error: String(result.reason) }, 'Error closing httpcloak session');
     }
   }
 }
@@ -516,10 +525,12 @@ async function httpRequestInternal(
         }
       }
 
-      // DNS rebinding protection: re-validate SSRF after connection
-      // This catches attacks where DNS resolves to a private IP after the initial check.
-      // Note: We don't require exact IP match because CDNs (CloudFront, Cloudflare, Akamai)
-      // use rotating anycast DNS that returns different IPs on each lookup.
+      // DNS rebinding defense: re-resolve hostname and verify it still maps to public IPs.
+      // Does NOT compare exact IPs (CDNs return different anycast IPs per lookup).
+      // Limitation: a fast-flipping DNS record could resolve to public on both checks
+      // but route to a private IP at the TCP level. Full mitigation would require
+      // inspecting the actual connection IP from the TLS socket, which httpcloak
+      // does not currently expose.
       if (preConnectionIPs.length > 0) {
         await validateSSRFWithTimeout(url);
       }
