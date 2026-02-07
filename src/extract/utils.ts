@@ -12,6 +12,9 @@ export function getNestedValue(obj: unknown, path: string): unknown {
   const parts = path.split('.');
   let current: unknown = obj;
   for (const part of parts) {
+    if (part === '__proto__' || part === 'constructor' || part === 'prototype') {
+      return null;
+    }
     if (current === null || current === undefined || typeof current !== 'object') {
       return null;
     }
@@ -39,7 +42,21 @@ export function countWords(text: string | null): number {
 }
 
 /** Elements to strip from API-sourced HTML. */
-export const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'] as const;
+export const DANGEROUS_SELECTORS = [
+  'script',
+  'style',
+  'iframe',
+  'object',
+  'embed',
+  'applet',
+  'base',
+  'link',
+  'meta',
+  'svg',
+  'math',
+  'form',
+  'template',
+] as const;
 
 /**
  * Remove dangerous elements, event handler attributes, and dangerous URI schemes from HTML.
@@ -53,7 +70,11 @@ export function sanitizeHtml(html: string): string {
   }
   for (const el of document.querySelectorAll('*')) {
     for (const attr of [...el.attributes]) {
-      if (/^on/i.test(attr.name) || /^\s*(javascript|vbscript|data):/i.test(String(attr.value))) {
+      if (
+        /^on/i.test(attr.name) ||
+        attr.name.toLowerCase() === 'formaction' ||
+        /^(javascript|vbscript|data):/i.test(String(attr.value).replace(/\s/g, ''))
+      ) {
         el.removeAttribute(attr.name);
       }
     }

@@ -1,10 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  isPdfUrl,
-  isPdfContentType,
-  extractPdfFromBuffer,
-  fetchRemotePdfBuffer,
-} from '../extract/pdf-extractor.js';
+import { isPdfUrl, isPdfContentType, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
+import { fetchRemotePdfBuffer } from '../fetch/pdf-fetch.js';
 
 vi.mock('../fetch/http-client.js', () => ({
   httpRequest: vi.fn(),

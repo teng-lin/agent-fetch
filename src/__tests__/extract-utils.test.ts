@@ -38,6 +38,22 @@ describe('extract/utils', () => {
       const obj = { items: [1, 2, 3] };
       expect(getNestedValue(obj, 'items')).toEqual([1, 2, 3]);
     });
+
+    it('blocks __proto__ traversal', () => {
+      expect(getNestedValue({ a: 1 }, '__proto__.polluted')).toBeNull();
+    });
+
+    it('blocks constructor traversal', () => {
+      expect(getNestedValue({ a: 1 }, 'constructor.prototype')).toBeNull();
+    });
+
+    it('blocks prototype traversal', () => {
+      expect(getNestedValue({ a: 1 }, 'prototype.isAdmin')).toBeNull();
+    });
+
+    it('blocks __proto__ at any depth', () => {
+      expect(getNestedValue({ a: { b: 1 } }, 'a.__proto__')).toBeNull();
+    });
   });
 
   describe('meetsThreshold', () => {
@@ -127,6 +143,16 @@ describe('extract/utils', () => {
       expect(result).not.toContain('javascript:');
     });
 
+    it('strips javascript: URIs with embedded control characters', () => {
+      const result = sanitizeHtml('<a href="java\nscript:alert(1)">click</a>');
+      expect(result).not.toContain('java');
+    });
+
+    it('strips javascript: URIs with embedded tabs', () => {
+      const result = sanitizeHtml('<a href="java\tscript:alert(1)">click</a>');
+      expect(result).not.toContain('java');
+    });
+
     it('strips vbscript: URIs', () => {
       const result = sanitizeHtml('<a href="vbscript:MsgBox(1)">click</a>');
       expect(result).not.toContain('vbscript:');
@@ -135,6 +161,46 @@ describe('extract/utils', () => {
     it('strips data: URIs', () => {
       const result = sanitizeHtml('<a href="data:text/html,<script>alert(1)</script>">click</a>');
       expect(result).not.toContain('data:');
+    });
+
+    it('removes object tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><object data="x.swf"></object>')).toBe('<p>Safe</p>');
+    });
+
+    it('removes embed tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><embed src="x.swf">')).toBe('<p>Safe</p>');
+    });
+
+    it('removes svg tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><svg onload="alert(1)"></svg>')).toBe('<p>Safe</p>');
+    });
+
+    it('removes form tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><form action="/steal"><input></form>')).toBe('<p>Safe</p>');
+    });
+
+    it('removes template tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><template><img src=x onerror=alert(1)></template>')).toBe(
+        '<p>Safe</p>'
+      );
+    });
+
+    it('removes base tags', () => {
+      expect(sanitizeHtml('<base href="https://evil.example.com"><p>Safe</p>')).toBe('<p>Safe</p>');
+    });
+
+    it('removes meta tags', () => {
+      expect(
+        sanitizeHtml(
+          '<meta http-equiv="refresh" content="0;url=https://evil.example.com"><p>Safe</p>'
+        )
+      ).toBe('<p>Safe</p>');
+    });
+
+    it('strips formaction attributes', () => {
+      const result = sanitizeHtml('<button formaction="https://evil.example.com">Submit</button>');
+      expect(result).not.toContain('formaction');
+      expect(result).toContain('Submit');
     });
 
     it('preserves safe content', () => {

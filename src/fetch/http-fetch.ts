@@ -22,12 +22,8 @@ import {
   buildPrismContentApiUrl,
   parseArcAnsContent,
 } from '../extract/prism-content-api.js';
-import {
-  isPdfUrl,
-  isPdfContentType,
-  fetchRemotePdfBuffer,
-  extractPdfFromBuffer,
-} from '../extract/pdf-extractor.js';
+import { isPdfUrl, isPdfContentType, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
+import { fetchRemotePdfBuffer } from './pdf-fetch.js';
 import { detectWpAjaxContent, parseWpAjaxResponse } from '../extract/wp-ajax-content.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';

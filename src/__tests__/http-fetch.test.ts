@@ -29,8 +29,11 @@ vi.mock('../sites/site-config.js', () => ({
 vi.mock('../extract/pdf-extractor.js', () => ({
   isPdfUrl: vi.fn().mockReturnValue(false),
   isPdfContentType: vi.fn().mockReturnValue(false),
-  fetchRemotePdfBuffer: vi.fn(),
   extractPdfFromBuffer: vi.fn(),
+}));
+
+vi.mock('../fetch/pdf-fetch.js', () => ({
+  fetchRemotePdfBuffer: vi.fn(),
 }));
 
 vi.mock('../logger.js', () => ({
@@ -55,12 +58,8 @@ import {
   siteUseWpRestApi,
   getSiteWpJsonApiPath,
 } from '../sites/site-config.js';
-import {
-  isPdfUrl,
-  isPdfContentType,
-  fetchRemotePdfBuffer,
-  extractPdfFromBuffer,
-} from '../extract/pdf-extractor.js';
+import { isPdfUrl, isPdfContentType, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
+import { fetchRemotePdfBuffer } from '../fetch/pdf-fetch.js';
 
 describe('httpFetch', () => {
   beforeEach(() => {

@@ -126,10 +126,19 @@ describe('fetch/http-client', () => {
       await expect(validateSSRF('https://example.com')).rejects.toThrow('SSRF protection');
     });
 
-    it('returns empty array when DNS fails', async () => {
+    it('throws when DNS resolution fails (fail closed)', async () => {
       mockDnsFailure();
-      const result = await validateSSRF('https://example.com');
-      expect(result).toEqual([]);
+      await expect(validateSSRF('https://example.com')).rejects.toThrow(
+        'SSRF protection: DNS resolution returned no addresses'
+      );
+    });
+
+    it('throws when DNS returns no addresses (fail closed)', async () => {
+      vi.mocked(dns.resolve4).mockResolvedValue([]);
+      vi.mocked(dns.resolve6).mockResolvedValue([]);
+      await expect(validateSSRF('https://example.com')).rejects.toThrow(
+        'SSRF protection: DNS resolution returned no addresses'
+      );
     });
 
     it('throws for 0.x.x.x "this network" range', async () => {

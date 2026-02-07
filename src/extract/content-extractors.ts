@@ -80,6 +80,24 @@ const ARTICLE_TYPES = [
 ] as const;
 
 /**
+ * Priority order for candidate selection in extractFromHtml.
+ * Adding a new strategy = add its result to the results Map + append its name here.
+ */
+const CANDIDATE_PRIORITY = [
+  'readability',
+  'next-rsc',
+  'nuxt-payload',
+  'react-router-hydration',
+  'next-data',
+  'json-ld',
+  'selector',
+  'text-density',
+] as const;
+
+/** Strategies excluded from the "good candidates" tier (too noisy at threshold). */
+const GOOD_CANDIDATES_EXCLUDE = new Set<string>(['selector']);
+
+/**
  * Extract published time from meta tags
  */
 export function extractPublishedTime(document: Document): string | null {
@@ -1198,6 +1216,18 @@ export function extractFromHtml(
     }
   }
 
+  // Candidate results keyed by strategy name (order matches CANDIDATE_PRIORITY).
+  const results = new Map<string, ExtractionResult | null>([
+    ['readability', effectiveReadability],
+    ['next-rsc', rscResult],
+    ['nuxt-payload', nuxtResult],
+    ['react-router-hydration', reactRouterResult],
+    ['next-data', nextDataResult],
+    ['json-ld', jsonLdResult],
+    ['selector', selectorResult],
+    ['text-density', textDensityResult],
+  ]);
+
   // All results for metadata composition (use readabilityResult, not effectiveReadability,
   // so Readability's metadata remains available even when the comparator prefers text-density)
   const allResults = [
@@ -1212,15 +1242,9 @@ export function extractFromHtml(
   ];
 
   // Collect all results that meet the good content threshold
-  const goodCandidates = [
-    effectiveReadability,
-    rscResult,
-    nuxtResult,
-    reactRouterResult,
-    nextDataResult,
-    jsonLdResult,
-    textDensityResult,
-  ].filter((r): r is ExtractionResult => meetsThreshold(r, GOOD_CONTENT_LENGTH));
+  const goodCandidates = CANDIDATE_PRIORITY.filter((n) => !GOOD_CANDIDATES_EXCLUDE.has(n))
+    .map((n) => results.get(n) ?? null)
+    .filter((r): r is ExtractionResult => meetsThreshold(r, GOOD_CONTENT_LENGTH));
 
   // If multiple strategies meet the threshold, prefer the one with the most content
   if (goodCandidates.length > 0) {
@@ -1237,16 +1261,7 @@ export function extractFromHtml(
   }
 
   // Fall back to minimum threshold candidates in priority order
-  const fallbackCandidates = [
-    effectiveReadability,
-    rscResult,
-    nuxtResult,
-    reactRouterResult,
-    nextDataResult,
-    jsonLdResult,
-    selectorResult,
-    textDensityResult,
-  ];
+  const fallbackCandidates = CANDIDATE_PRIORITY.map((n) => results.get(n) ?? null);
 
   for (const result of fallbackCandidates) {
     if (meetsThreshold(result, MIN_CONTENT_LENGTH)) {
@@ -1256,15 +1271,7 @@ export function extractFromHtml(
   }
 
   // Return best partial result with composition
-  const partialResult =
-    effectiveReadability ??
-    rscResult ??
-    nuxtResult ??
-    reactRouterResult ??
-    nextDataResult ??
-    jsonLdResult ??
-    selectorResult ??
-    textDensityResult;
+  const partialResult = fallbackCandidates.find((r) => r !== null) ?? null;
   if (partialResult) {
     return finalizeResult(composeMetadata(partialResult, allResults, jsonLdMeta));
   }

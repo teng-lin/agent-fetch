@@ -1,7 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseCookies, parseArgs, parseCrawlArgs } from '../cli.js';
 import { resolveProxy } from '../fetch/http-fetch.js';
 import { validateProxyUrl, redactProxyUrl } from '../fetch/http-client.js';
+import { promises as dns } from 'dns';
+
+vi.mock('dns', () => ({
+  promises: {
+    resolve4: vi.fn(),
+    resolve6: vi.fn(),
+  },
+}));
 
 describe('parseCookies', () => {
   it('parses semicolon-separated cookies', () => {
@@ -97,6 +105,16 @@ describe('resolveProxy', () => {
 });
 
 describe('validateProxyUrl', () => {
+  beforeEach(() => {
+    // Mock DNS to return a public IP for proxy hostnames
+    vi.mocked(dns.resolve4).mockResolvedValue(['93.184.216.34']);
+    vi.mocked(dns.resolve6).mockRejectedValue(new Error('no AAAA'));
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('accepts http:// proxy', async () => {
     await expect(validateProxyUrl('http://proxy.example.com:8080')).resolves.toBeUndefined();
   });

@@ -111,14 +111,14 @@ function loadSiteConfigs(): Record<string, SiteConfig> {
   }
 }
 
-// --- Module-level variable ---
+// --- Module-level state ---
 
 const SITE_CONFIGS: Record<string, SiteConfig> = loadSiteConfigs();
 
 // --- Validation ---
 
 /**
- * Validate all site configs at startup. Throws if any config is invalid.
+ * Validate all site configs against the Zod schema. Throws if any config is invalid.
  */
 export function validateSiteConfigs(): void {
   const errors: string[] = [];
@@ -132,6 +132,19 @@ export function validateSiteConfigs(): void {
 
   if (errors.length > 0) {
     throw new Error(`Invalid site configs:\n${errors.join('\n')}`);
+  }
+}
+
+// Validate at load time. Remove invalid entries so only valid configs are used,
+// but log warnings instead of crashing so one bad entry doesn't take down the app.
+for (const domain of Object.keys(SITE_CONFIGS)) {
+  const result = SiteConfigSchema.safeParse(SITE_CONFIGS[domain]);
+  if (!result.success) {
+    logger.warn(
+      { domain, error: result.error.message },
+      'Invalid site config detected and removed'
+    );
+    delete SITE_CONFIGS[domain];
   }
 }
 

@@ -121,10 +121,9 @@ export async function validateSSRF(url: string): Promise<string[]> {
       addresses.push(...ipv6Result.value);
     }
 
-    // If no addresses resolved, let the request fail naturally
+    // Fail closed: cannot verify URL is safe without DNS resolution
     if (addresses.length === 0) {
-      logger.debug({ hostname }, 'DNS resolution failed for both IPv4 and IPv6');
-      return [];
+      throw new Error(`SSRF protection: DNS resolution returned no addresses for ${hostname}`);
     }
 
     // Check each resolved IP
@@ -136,12 +135,11 @@ export async function validateSSRF(url: string): Promise<string[]> {
 
     return addresses;
   } catch (error) {
-    // Only block if we successfully resolved to a private IP
     if (error instanceof Error && error.message.includes('SSRF protection')) {
       throw error;
     }
-    // DNS resolution failures are acceptable (let the request fail naturally)
-    return [];
+    // Fail closed: DNS errors prevent SSRF validation
+    throw new Error(`SSRF protection: DNS resolution failed for ${hostname}`);
   }
 }
 
