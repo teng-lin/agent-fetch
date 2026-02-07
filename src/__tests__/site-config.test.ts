@@ -18,9 +18,9 @@ import {
 describe('parseSiteConfigJson', () => {
   it('parses basic site config fields', () => {
     const result = parseSiteConfigJson({
-      'test.com': {
+      'test.example.com': {
         userAgent: 'TestBot/1.0',
-        referer: 'https://google.com/',
+        referer: 'https://search.example.com/',
         preferJsonLd: true,
         useNextData: false,
         nextDataPath: 'props.pageProps.content',
@@ -30,9 +30,9 @@ describe('parseSiteConfigJson', () => {
       },
     });
 
-    expect(result['test.com']).toEqual({
+    expect(result['test.example.com']).toEqual({
       userAgent: 'TestBot/1.0',
-      referer: 'https://google.com/',
+      referer: 'https://search.example.com/',
       preferJsonLd: true,
       useNextData: false,
       nextDataPath: 'props.pageProps.content',
@@ -44,23 +44,23 @@ describe('parseSiteConfigJson', () => {
 
   it('ignores unknown fields', () => {
     const result = parseSiteConfigJson({
-      'test.com': {
+      'test.example.com': {
         userAgent: 'Bot/1.0',
         unknownField: 'should be ignored',
         anotherUnknown: 42,
       },
     });
-    expect(result['test.com']).toEqual({ userAgent: 'Bot/1.0' });
+    expect(result['test.example.com']).toEqual({ userAgent: 'Bot/1.0' });
   });
 
   it('ignores fields with wrong types', () => {
     const result = parseSiteConfigJson({
-      'test.com': {
+      'test.example.com': {
         userAgent: 123,
         preferJsonLd: 1,
       },
     });
-    expect(result['test.com']).toEqual({});
+    expect(result['test.example.com']).toEqual({});
   });
 
   it('parses multiple domains', () => {

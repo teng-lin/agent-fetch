@@ -63,7 +63,7 @@ Initial release.
 
 - HTTP client with Chrome TLS fingerprinting via httpcloak
 - SSRF protection with DNS validation
-- Multi-strategy content extraction (Readability, JSON-LD, Text Density, Next.js RSC, CSS selectors, unfluff)
+- Multi-strategy content extraction (Readability, JSON-LD, Text Density, Next.js RSC, CSS selectors)
 - WordPress REST API auto-detection and extraction
 - Per-field metadata composition across strategies
 - Markdown output via Turndown

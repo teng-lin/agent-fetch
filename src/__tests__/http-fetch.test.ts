@@ -120,7 +120,7 @@ describe('httpFetch', () => {
   it('applies site-specific user agent and referer headers', async () => {
     const url = 'https://example.com/article';
     const customUA = 'Mozilla/5.0 Custom';
-    const customReferer = 'https://google.com';
+    const customReferer = 'https://search.example.com';
 
     vi.mocked(getSiteUserAgent).mockReturnValue(customUA);
     vi.mocked(getSiteReferer).mockReturnValue(customReferer);
@@ -436,14 +436,14 @@ describe('httpFetch', () => {
   });
 
   it('does not retry SSRF protection errors', async () => {
-    const url = 'https://evil.com/article';
+    const url = 'https://evil.example.com/article';
 
     vi.mocked(httpRequest).mockResolvedValue({
       success: false,
       statusCode: 0,
       headers: {},
       cookies: [],
-      error: 'SSRF protection: hostname evil.com resolves to private IP 192.168.1.1',
+      error: 'SSRF protection: hostname evil.example.com resolves to private IP 192.168.1.1',
     });
 
     const result = await httpFetch(url);

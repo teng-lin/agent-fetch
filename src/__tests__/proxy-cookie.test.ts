@@ -40,6 +40,12 @@ describe('parseCookies', () => {
   it('skips pairs with empty name', () => {
     expect(parseCookies(['=value'])).toBeUndefined();
   });
+
+  it('strips newlines and null bytes from cookie values', () => {
+    expect(parseCookies(['session=abc\r\ndef'])).toEqual({ session: 'abcdef' });
+    expect(parseCookies(['token=val\nue'])).toEqual({ token: 'value' });
+    expect(parseCookies(['id=a\0b'])).toEqual({ id: 'ab' });
+  });
 });
 
 describe('resolveProxy', () => {
