@@ -112,6 +112,19 @@ describe('extract/utils', () => {
     });
   });
 
+  describe('countWords — CJK limitation', () => {
+    it('treats CJK string without spaces as a single word (known limitation)', () => {
+      // CJK characters have no spaces between words, so whitespace-based
+      // splitting treats the entire string as one "word".
+      expect(countWords('这是一个测试')).toBe(1);
+    });
+
+    it('counts CJK mixed with Latin words correctly for Latin portion', () => {
+      // Only the Latin words separated by spaces get counted properly
+      expect(countWords('hello 这是一个测试 world')).toBe(3);
+    });
+  });
+
   describe('sanitizeHtml', () => {
     it('removes script tags', () => {
       expect(sanitizeHtml('<p>Safe</p><script>alert(1)</script>')).toBe('<p>Safe</p>');
@@ -210,6 +223,23 @@ describe('extract/utils', () => {
 
     it('returns original html for empty input', () => {
       expect(sanitizeHtml('')).toBe('');
+    });
+
+    it('removes nested script tags', () => {
+      const result = sanitizeHtml('<div><script><script>nested</script></script></div>');
+      expect(result).not.toContain('<script');
+      expect(result).not.toContain('nested');
+      expect(result).toContain('<div>');
+    });
+
+    it('removes script nested inside style', () => {
+      expect(sanitizeHtml('<div><style><script>alert(1)</script></style></div>')).toBe(
+        '<div></div>'
+      );
+    });
+
+    it('strips data: URI in img src attribute', () => {
+      expect(sanitizeHtml('<img src="data:image/png;base64,iVBORw0KGgo=">')).toBe('<img>');
     });
   });
 

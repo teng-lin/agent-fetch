@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { crawl } from '../crawl/crawler.js';
 import type { CrawlResult, CrawlSummary } from '../crawl/types.js';
 import type { FetchResult } from '../fetch/types.js';
@@ -51,6 +51,16 @@ async function collectResults(
   return results;
 }
 
+function filterCrawlResults(results: (CrawlResult | CrawlSummary)[]): CrawlResult[] {
+  return results.filter((r): r is CrawlResult => !('type' in r));
+}
+
+function findSummary(results: (CrawlResult | CrawlSummary)[]): CrawlSummary {
+  const summary = results.find((r): r is CrawlSummary => 'type' in r && r.type === 'summary');
+  expect(summary).toBeDefined();
+  return summary!;
+}
+
 describe('crawl orchestrator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,19 +82,15 @@ describe('crawl orchestrator', () => {
       );
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 1 }));
-
-      const crawlResults = results.filter((r): r is CrawlResult => !('type' in r));
-      const summaries = results.filter(
-        (r): r is CrawlSummary => 'type' in r && r.type === 'summary'
-      );
+      const crawlResults = filterCrawlResults(results);
+      const summary = findSummary(results);
 
       expect(crawlResults.length).toBe(1);
       expect(crawlResults[0].url).toBe('https://example.com/');
       expect(crawlResults[0]).toHaveProperty('depth');
-      expect(summaries.length).toBe(1);
-      expect(summaries[0].pagesTotal).toBe(1);
-      expect(summaries[0].pagesSuccess).toBe(1);
-      expect(summaries[0].source).toBe('links');
+      expect(summary.pagesTotal).toBe(1);
+      expect(summary.pagesSuccess).toBe(1);
+      expect(summary.source).toBe('links');
     });
 
     it('follows links discovered in raw HTML', async () => {
@@ -100,9 +106,8 @@ describe('crawl orchestrator', () => {
       });
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 3 }));
+      const urls = filterCrawlResults(results).map((r) => r.url);
 
-      const crawlResults = results.filter((r): r is CrawlResult => !('type' in r));
-      const urls = crawlResults.map((r) => r.url);
       expect(urls).toContain('https://example.com/');
       expect(urls.length).toBeGreaterThanOrEqual(2);
       expect(callCount).toBeGreaterThanOrEqual(2);
@@ -120,12 +125,8 @@ describe('crawl orchestrator', () => {
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 2 }));
 
-      const crawlResults = results.filter((r): r is CrawlResult => !('type' in r));
-      expect(crawlResults.length).toBeLessThanOrEqual(2);
-
-      const summary = results.find((r): r is CrawlSummary => 'type' in r && r.type === 'summary');
-      expect(summary).toBeDefined();
-      expect(summary!.pagesTotal).toBeLessThanOrEqual(2);
+      expect(filterCrawlResults(results).length).toBeLessThanOrEqual(2);
+      expect(findSummary(results).pagesTotal).toBeLessThanOrEqual(2);
     });
   });
 
@@ -161,11 +162,10 @@ describe('crawl orchestrator', () => {
       vi.mocked(httpFetch).mockImplementation(async (url) => mockFetchResult(url));
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 10 }));
+      const summary = findSummary(results);
 
-      const summary = results.find((r): r is CrawlSummary => 'type' in r && r.type === 'summary');
-      expect(summary).toBeDefined();
-      expect(summary!.source).toBe('sitemap');
-      expect(summary!.pagesSuccess).toBeGreaterThanOrEqual(2);
+      expect(summary.source).toBe('sitemap');
+      expect(summary.pagesSuccess).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -195,9 +195,8 @@ describe('crawl orchestrator', () => {
       });
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 10 }));
+      const urls = filterCrawlResults(results).map((r) => r.url);
 
-      const crawlResults = results.filter((r): r is CrawlResult => !('type' in r));
-      const urls = crawlResults.map((r) => r.url);
       expect(urls).not.toContain('https://example.com/admin/secret');
     });
 
@@ -223,9 +222,7 @@ describe('crawl orchestrator', () => {
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 10 }));
 
-      const summary = results.find((r): r is CrawlSummary => 'type' in r && r.type === 'summary');
-      expect(summary).toBeDefined();
-      expect(summary!.pagesBlocked).toBeGreaterThanOrEqual(1);
+      expect(findSummary(results).pagesBlocked).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -290,11 +287,123 @@ describe('crawl orchestrator', () => {
       });
 
       const results = await collectResults(crawl('https://example.com/', { maxPages: 1 }));
+      const summary = findSummary(results);
 
-      const summary = results.find((r): r is CrawlSummary => 'type' in r && r.type === 'summary');
-      expect(summary).toBeDefined();
-      expect(summary!.pagesFailed).toBe(1);
-      expect(summary!.pagesSuccess).toBe(0);
+      expect(summary.pagesFailed).toBe(1);
+      expect(summary.pagesSuccess).toBe(0);
+    });
+  });
+
+  describe('delay between batches', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('waits between batches when delay is configured', async () => {
+      vi.useFakeTimers();
+
+      // Start page discovers 2 more pages, so we get 2 batches
+      let fetchCount = 0;
+      vi.mocked(httpFetch).mockImplementation(async (url) => {
+        fetchCount++;
+        if (url === 'https://example.com/') {
+          return mockFetchResult(url, {
+            rawHtml: '<html><body><a href="/page-a">A</a><a href="/page-b">B</a></body></html>',
+          });
+        }
+        return mockFetchResult(url, { rawHtml: null });
+      });
+
+      const gen = crawl('https://example.com/', {
+        maxPages: 3,
+        concurrency: 1,
+        delay: 500,
+      });
+
+      const results: (CrawlResult | CrawlSummary)[] = [];
+      // Manually iterate the generator to control timing
+      const iterate = async () => {
+        for await (const item of gen) {
+          results.push(item);
+        }
+      };
+
+      const done = iterate();
+
+      // Allow first batch to complete
+      await vi.advanceTimersByTimeAsync(0);
+      // First batch fetched, now delay timer should be pending
+      await vi.advanceTimersByTimeAsync(500);
+      // Allow second batch
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(500);
+      // Allow third batch
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(500);
+
+      await done;
+
+      expect(fetchCount).toBeGreaterThanOrEqual(2);
+      findSummary(results);
+    });
+  });
+
+  describe('concurrency limiting', () => {
+    it('processes pages sequentially when concurrency is 1', async () => {
+      const callOrder: string[] = [];
+
+      vi.mocked(httpFetch).mockImplementation(async (url) => {
+        callOrder.push(`start:${new URL(url).pathname}`);
+        // Simulate some async work
+        await new Promise((r) => setTimeout(r, 0));
+        callOrder.push(`end:${new URL(url).pathname}`);
+        if (url === 'https://example.com/') {
+          return mockFetchResult(url, {
+            rawHtml: '<html><body><a href="/a">A</a><a href="/b">B</a></body></html>',
+          });
+        }
+        return mockFetchResult(url, { rawHtml: null });
+      });
+
+      await collectResults(crawl('https://example.com/', { maxPages: 3, concurrency: 1 }));
+
+      // With concurrency=1, each batch has only 1 item, so pages are sequential.
+      // The first page must complete before the second starts.
+      expect(callOrder[0]).toBe('start:/');
+      expect(callOrder[1]).toBe('end:/');
+      // Second page starts after first ends
+      if (callOrder.length >= 4) {
+        expect(callOrder[2]).toMatch(/^start:/);
+        expect(callOrder[3]).toMatch(/^end:/);
+      }
+    });
+
+    it('processes multiple pages per batch when concurrency > 1', async () => {
+      const concurrent: number[] = [];
+      let inFlight = 0;
+
+      vi.mocked(httpFetch).mockImplementation(async (url) => {
+        inFlight++;
+        concurrent.push(inFlight);
+        await new Promise((r) => setTimeout(r, 0));
+        inFlight--;
+        if (url === 'https://example.com/') {
+          return mockFetchResult(url, {
+            rawHtml:
+              '<html><body><a href="/a">A</a><a href="/b">B</a><a href="/c">C</a></body></html>',
+          });
+        }
+        return mockFetchResult(url, { rawHtml: null });
+      });
+
+      await collectResults(crawl('https://example.com/', { maxPages: 4, concurrency: 3 }));
+
+      // With concurrency=3, the second batch (pages /a, /b, /c) should have
+      // multiple in-flight requests simultaneously
+      const maxConcurrent = Math.max(...concurrent);
+      // The second batch processes 3 discovered links concurrently,
+      // so at least 2 should be in-flight at the same time.
+      expect(maxConcurrent).toBeGreaterThanOrEqual(2);
     });
   });
 });

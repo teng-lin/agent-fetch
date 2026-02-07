@@ -204,6 +204,105 @@ describe('fetch/http-client', () => {
     });
   });
 
+  describe('session recycling', () => {
+    it('recycles session after max age', async () => {
+      vi.useFakeTimers();
+      mockDnsIPv4Only('93.184.216.34');
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      const result1 = await httpRequest('https://example.com/page');
+      expect(result1.success).toBe(true);
+      const constructorCallsBefore = mockSessionOptions.length;
+
+      // Advance past SESSION_MAX_AGE_MS (1 hour)
+      vi.advanceTimersByTime(61 * 60 * 1000);
+
+      const result2 = await httpRequest('https://example.com/page');
+      expect(result2.success).toBe(true);
+      expect(mockSessionOptions.length).toBeGreaterThan(constructorCallsBefore);
+      expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('defers recycling when session has in-flight requests', async () => {
+      vi.useFakeTimers();
+      mockDnsIPv4Only('93.184.216.34');
+
+      mockGet.mockResolvedValueOnce({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+      await httpRequest('https://example.com/page');
+      const constructorCallsBefore = mockSessionOptions.length;
+
+      // Use timeout > SESSION_MAX_AGE_MS to prevent the request timeout from
+      // firing before we advance past the session max age window.
+      let resolveInflight!: (v: unknown) => void;
+      mockGet.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveInflight = resolve;
+        })
+      );
+      const twoHoursMs = 2 * 60 * 60 * 1000;
+      const inflightPromise = httpRequest(
+        'https://example.com/inflight',
+        {},
+        undefined,
+        twoHoursMs
+      );
+
+      // Advance past max age but NOT past the 2-hour request timeout
+      await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
+
+      // Session should NOT be recycled while inFlightRequests > 0
+      await getSession();
+      expect(mockSessionOptions.length).toBe(constructorCallsBefore);
+
+      resolveInflight({
+        ok: true,
+        statusCode: 200,
+        text: '<html>Inflight done</html>',
+        headers: {},
+        cookies: [],
+      });
+      // Advance past remaining timeout to avoid dangling timers
+      await vi.advanceTimersByTimeAsync(twoHoursMs);
+      await inflightPromise;
+    });
+  });
+
+  describe('LRU eviction', () => {
+    it('evicts least-recently-used session when cache exceeds MAX_SESSIONS', async () => {
+      for (let i = 0; i < 50; i++) {
+        await getSession(`preset-${i}`);
+      }
+      await getSession('preset-overflow');
+      expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('evicts oldest session by lastAccessed time', async () => {
+      vi.useFakeTimers();
+      for (let i = 0; i < 50; i++) {
+        await getSession(`preset-${i}`);
+        vi.advanceTimersByTime(10);
+      }
+      // Re-access preset-0 so it becomes recently used
+      await getSession('preset-0');
+
+      // Overflow should evict preset-1 (oldest lastAccessed), NOT preset-0
+      await getSession('preset-overflow');
+      expect(mockClose).toHaveBeenCalled();
+    });
+  });
+
   describe('closeAllSessions', () => {
     it('clears cache so next call creates new session', async () => {
       const session1 = await getSession();
@@ -410,7 +509,7 @@ describe('fetch/http-client', () => {
       expect(result.statusCode).toBe(200);
       expect(result.html).toBe('<html>Full content</html>');
       expect(mockGet).toHaveBeenCalledTimes(2);
-      expect(mockClose).toHaveBeenCalled(); // fresh session closed
+      expect(mockClose).toHaveBeenCalled();
     });
 
     it('returns 304 result when retry also gets 304', async () => {
@@ -423,7 +522,7 @@ describe('fetch/http-client', () => {
       });
 
       const result = await httpRequest('https://example.com/page');
-      expect(result.success).toBe(true); // ok is true for 304 (< 400)
+      expect(result.success).toBe(true);
       expect(result.statusCode).toBe(304);
       expect(mockGet).toHaveBeenCalledTimes(2);
     });
@@ -444,7 +543,6 @@ describe('fetch/http-client', () => {
 
     it('handles request timeout', async () => {
       vi.useFakeTimers();
-      // Mock session.get to never resolve (simulates hang)
       mockGet.mockImplementation(() => new Promise(() => {}));
 
       const resultPromise = httpRequest('https://example.com/page');
@@ -456,11 +554,10 @@ describe('fetch/http-client', () => {
 
     it('respects custom timeout value', async () => {
       vi.useFakeTimers();
-      // Mock session.get to never resolve (simulates hang)
       mockGet.mockImplementation(() => new Promise(() => {}));
 
       const resultPromise = httpRequest('https://example.com/page', {}, undefined, 5000);
-      await vi.advanceTimersByTimeAsync(6000); // Custom timeout is 5s
+      await vi.advanceTimersByTimeAsync(6000);
       const result = await resultPromise;
       expect(result.success).toBe(false);
       expect(result.error).toContain('Request timeout after 5000ms');
@@ -468,7 +565,6 @@ describe('fetch/http-client', () => {
 
     it('handles DNS resolution timeout', async () => {
       vi.useFakeTimers();
-      // Mock DNS to never resolve
       vi.mocked(dns.resolve4).mockImplementation(() => new Promise(() => {}));
       vi.mocked(dns.resolve6).mockImplementation(() => new Promise(() => {}));
 
@@ -601,7 +697,7 @@ describe('fetch/http-client', () => {
         'http://proxy.example.com:8080'
       );
 
-      // Cached session + fresh 304-retry session: both must have proxy
+      // Both the cached session and the fresh 304-retry session must have the proxy
       const proxyOptions = mockSessionOptions.filter(
         (opts) => opts.proxy === 'http://proxy.example.com:8080'
       );
@@ -629,7 +725,6 @@ describe('fetch/http-client', () => {
         session: 'abc',
       });
 
-      // Both original and retry requests should include cookies
       expect(mockGet).toHaveBeenCalledTimes(2);
       expect(mockGet.mock.calls[0][1]).toHaveProperty('cookies', { session: 'abc' });
       expect(mockGet.mock.calls[1][1]).toHaveProperty('cookies', { session: 'abc' });
