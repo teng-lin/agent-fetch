@@ -1,19 +1,12 @@
 /**
  * Content validation logic for HTTP probe
  */
+import { countWords } from '../extract/utils.js';
 import type { ValidationResult } from './types.js';
 
 // Conservative thresholds based on e2e test analysis
 const MIN_WORD_COUNT = 100;
 const MIN_BODY_SIZE = 5 * 1024; // 5KB
-
-function countWords(text: string | null): number {
-  if (!text) return 0;
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w.length > 0).length;
-}
 
 /**
  * Quickly validate if HTTP response contains valid article content.

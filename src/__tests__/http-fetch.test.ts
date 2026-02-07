@@ -538,6 +538,144 @@ describe('httpFetch', () => {
     const presetArg = vi.mocked(httpRequest).mock.calls[0][2];
     expect(presetArg).toBeUndefined();
   });
+
+  describe('WP REST API fallback via resolveWpApiUrl', () => {
+    it('detects WP API from HTML link tag and fetches content', async () => {
+      // Mock detectWpRestApi to return a URL (simulating link tag detection)
+      vi.mocked(detectWpRestApi).mockReturnValueOnce('https://example.com/wp-json/wp/v2/posts/123');
+
+      // First call: returns HTML (DOM extraction returns insufficient content)
+      vi.mocked(httpRequest).mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: '<html><body><article>Short stub</article></body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValueOnce({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValueOnce({
+        title: 'WP Article',
+        content: '<p>Short stub</p>',
+        textContent: 'Short stub',
+        byline: null,
+        excerpt: null,
+        siteName: null,
+        publishedTime: null,
+        lang: null,
+        markdown: null,
+        isAccessibleForFree: undefined,
+        declaredWordCount: undefined,
+        media: undefined,
+        method: 'readability',
+      });
+
+      // Second call: WP API response with sufficient content
+      vi.mocked(httpRequest).mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: JSON.stringify({
+          id: 123,
+          title: { rendered: 'Full WP Article Title' },
+          content: {
+            rendered: '<p>' + 'Full article content from WordPress REST API. '.repeat(20) + '</p>',
+          },
+          excerpt: { rendered: '<p>Article excerpt</p>' },
+          date: '2025-01-15T10:00:00',
+        }),
+        headers: { 'content-type': 'application/json' },
+        cookies: [],
+      });
+
+      const result = await httpFetch('https://example.com/wp-article');
+      expect(result.success).toBe(true);
+      expect(result.extractionMethod).toBe('wp-rest-api');
+    });
+
+    it('uses config-driven WP REST API with slug from URL', async () => {
+      // siteUseWpRestApi triggers the fast path (skips HTML fetch)
+      vi.mocked(siteUseWpRestApi).mockReturnValueOnce(true);
+
+      // Fast path: WP API response with sufficient content (first httpRequest call)
+      // Content must exceed GOOD_CONTENT_LENGTH (500 chars) to pass the threshold
+      vi.mocked(httpRequest).mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: JSON.stringify([
+          {
+            id: 456,
+            title: { rendered: 'Config WP Article' },
+            content: { rendered: '<p>' + 'WP content word. '.repeat(50) + '</p>' },
+            excerpt: { rendered: '<p>Excerpt</p>' },
+            date_gmt: '2025-02-01T12:00:00',
+            _embedded: { author: [{ name: 'WP Author' }] },
+          },
+        ]),
+        headers: { 'content-type': 'application/json' },
+        cookies: [],
+      });
+
+      const result = await httpFetch('https://example.com/my-article-slug');
+
+      expect(result.success).toBe(true);
+      expect(result.extractionMethod).toBe('wp-rest-api');
+      // Fast path makes a single httpRequest call to the slug-based WP API URL
+      expect(vi.mocked(httpRequest)).toHaveBeenCalledTimes(1);
+      const firstCallUrl = vi.mocked(httpRequest).mock.calls[0][0];
+      expect(firstCallUrl).toContain('/wp-json/wp/v2/posts?slug=my-article-slug');
+    });
+
+    it('uses custom wpJsonApiPath from site config', async () => {
+      vi.mocked(getSiteWpJsonApiPath).mockReturnValueOnce('/api/v1/posts/');
+      vi.mocked(detectWpRestApi).mockReturnValueOnce(null);
+
+      vi.mocked(httpRequest).mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: '<html><body><article>Stub</article></body></html>',
+        headers: { 'content-type': 'text/html' },
+        cookies: [],
+      });
+
+      vi.mocked(quickValidate).mockReturnValueOnce({ valid: true });
+      vi.mocked(extractFromHtml).mockReturnValueOnce({
+        title: 'Custom API',
+        content: '<p>Stub</p>',
+        textContent: 'Stub',
+        byline: null,
+        excerpt: null,
+        siteName: null,
+        publishedTime: null,
+        lang: null,
+        markdown: null,
+        isAccessibleForFree: undefined,
+        declaredWordCount: undefined,
+        media: undefined,
+        method: 'readability',
+      });
+
+      vi.mocked(httpRequest).mockResolvedValueOnce({
+        success: true,
+        statusCode: 200,
+        html: JSON.stringify({
+          id: 789,
+          title: { rendered: 'Custom API Article' },
+          content: {
+            rendered: '<p>' + 'Content from custom API. '.repeat(20) + '</p>',
+          },
+          excerpt: { rendered: '<p>Excerpt</p>' },
+          date: '2025-02-01',
+        }),
+        headers: { 'content-type': 'application/json' },
+        cookies: [],
+      });
+
+      await httpFetch('https://example.com/posts/my-custom-slug');
+
+      const secondCallUrl = vi.mocked(httpRequest).mock.calls[1]?.[0];
+      expect(secondCallUrl).toContain('/api/v1/posts/my-custom-slug');
+    });
+  });
 });
 
 describe('resolveProxy', () => {

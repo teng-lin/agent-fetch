@@ -110,18 +110,33 @@ describe('extract/utils', () => {
     it('returns 0 for whitespace-only string', () => {
       expect(countWords('   \t\n  ')).toBe(0);
     });
-  });
 
-  describe('countWords — CJK limitation', () => {
-    it('treats CJK string without spaces as a single word (known limitation)', () => {
-      // CJK characters have no spaces between words, so whitespace-based
-      // splitting treats the entire string as one "word".
-      expect(countWords('这是一个测试')).toBe(1);
+    it('counts CJK characters as individual words', () => {
+      expect(countWords('这是一篇测试文章')).toBeGreaterThanOrEqual(7);
     });
 
-    it('counts CJK mixed with Latin words correctly for Latin portion', () => {
-      // Only the Latin words separated by spaces get counted properly
-      expect(countWords('hello 这是一个测试 world')).toBe(3);
+    it('counts mixed CJK and Latin text', () => {
+      expect(countWords('hello world test 你好世界')).toBeGreaterThanOrEqual(7);
+    });
+
+    it('counts Japanese text', () => {
+      expect(countWords('こんにちは世界よ')).toBeGreaterThanOrEqual(7);
+    });
+
+    it('counts Korean text', () => {
+      expect(countWords('안녕하세요세상아')).toBeGreaterThanOrEqual(7);
+    });
+  });
+
+  describe('countWords — CJK support', () => {
+    it('counts each CJK character individually', () => {
+      // Each CJK character counts as one word (6 characters = 6 words)
+      expect(countWords('这是一个测试')).toBe(6);
+    });
+
+    it('counts CJK mixed with Latin words correctly', () => {
+      // 2 Latin words + 6 CJK characters = 8 words
+      expect(countWords('hello 这是一个测试 world')).toBe(8);
     });
   });
 

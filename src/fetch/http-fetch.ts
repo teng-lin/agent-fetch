@@ -24,6 +24,7 @@ import {
 } from '../extract/prism-content-api.js';
 import { isPdfUrl, isPdfContentType, extractPdfFromBuffer } from '../extract/pdf-extractor.js';
 import { fetchRemotePdfBuffer } from './pdf-fetch.js';
+import { countWords } from '../extract/utils.js';
 import { detectWpAjaxContent, parseWpAjaxResponse } from '../extract/wp-ajax-content.js';
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
@@ -59,12 +60,6 @@ const NEXT_DATA_ROUTE_THRESHOLD = 2000;
  * prefer the DOM content. Catches API responses that return only a teaser.
  */
 const WP_DOM_COMPARATOR_RATIO = 2;
-
-/** Count whitespace-delimited words in a string. Returns undefined for empty/null input. */
-function countWords(text: string | null | undefined): number | undefined {
-  if (!text) return undefined;
-  return text.split(/\s+/).filter(Boolean).length;
-}
 
 /** Check if an error is a security error that should not be retried. */
 function isSecurityError(error: string | undefined): boolean {
@@ -143,7 +138,8 @@ function successResult(
     markdown: extracted.markdown ?? undefined,
     isAccessibleForFree: extracted.isAccessibleForFree,
     declaredWordCount: extracted.declaredWordCount,
-    extractedWordCount: countWords(extracted.textContent),
+    // countWords returns 0 for empty text; convert to undefined for optional field
+    extractedWordCount: countWords(extracted.textContent) || undefined,
     media: extracted.media,
     ...extras,
   };

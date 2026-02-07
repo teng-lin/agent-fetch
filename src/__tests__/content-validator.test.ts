@@ -71,16 +71,13 @@ describe('quickValidate', () => {
     expect(elapsed).toBeLessThan(100);
   });
 
-  it('undercounts CJK text due to whitespace-based word splitting (known limitation)', () => {
-    // CJK characters have no spaces between words, so the whitespace-based
-    // word counter treats them as one "word". A >5KB page with 200+ CJK
-    // characters fails insufficient_content because countWords splits on \s+.
+  it('accepts CJK text with 100+ characters (CJK-aware word counting)', () => {
+    // Each CJK character counts as one word. 270 CJK chars > MIN_WORD_COUNT (100).
     const cjkChars = '这是一个关于人工智能的文章内容。'.repeat(30); // 270 CJK chars
     const padding = '<div>' + 'x'.repeat(5200) + '</div>'; // Ensure >5KB
     const html = `<html><body>${padding}<article>${cjkChars}</article></body></html>`;
     const result = quickValidate(html, 200, 'text/html');
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('insufficient_content');
+    expect(result.valid).toBe(true);
   });
 
   it('accepts content-type as array', () => {
@@ -111,5 +108,49 @@ describe('quickValidate', () => {
     const result = quickValidate(html, 200, 'text/html');
     expect(result.valid).toBe(false);
     expect(result.error).toBe('insufficient_content');
+  });
+
+  describe('CJK content validation', () => {
+    // Helper: wrap body content in HTML with enough byte-size to pass the 5KB check
+    function wrapHtml(body: string): string {
+      const padding = '<div>' + 'x'.repeat(5200) + '</div>';
+      return '<html><head><title>Test</title></head><body>' + padding + body + '</body></html>';
+    }
+
+    it('accepts Chinese article with 100+ characters', () => {
+      const chineseText = '这是一篇关于人工智能技术发展的文章内容'.repeat(8);
+      const html = wrapHtml(`<article><p>${chineseText}</p></article>`);
+      const result = quickValidate(html, 200);
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects Chinese article with fewer than 100 characters', () => {
+      const chineseText = '这是一篇关于人工智能技术发展的文章内容很短';
+      const html = wrapHtml(`<article><p>${chineseText}</p></article>`);
+      const result = quickValidate(html, 200);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('insufficient_content');
+    });
+
+    it('accepts Japanese article with 100+ characters', () => {
+      const japaneseText = 'これは人工知能技術の発展に関する記事の内容です'.repeat(8);
+      const html = wrapHtml(`<article><p>${japaneseText}</p></article>`);
+      const result = quickValidate(html, 200);
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts Korean article with 100+ characters', () => {
+      const koreanText = '인공지능기술의발전에관한기사의내용입니다여기'.repeat(8);
+      const html = wrapHtml(`<article><p>${koreanText}</p></article>`);
+      const result = quickValidate(html, 200);
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts mixed CJK and English content', () => {
+      const mixed = ('Hello world ' + '你好世界测试内容 ').repeat(15);
+      const html = wrapHtml(`<article><p>${mixed}</p></article>`);
+      const result = quickValidate(html, 200);
+      expect(result.valid).toBe(true);
+    });
   });
 });

@@ -609,6 +609,129 @@ describe('fetch/http-client', () => {
     });
   });
 
+  describe('session recycling', () => {
+    beforeEach(() => {
+      mockDnsIPv4Only('93.184.216.34');
+    });
+
+    it('creates new session after previous one ages out', async () => {
+      vi.useFakeTimers();
+
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      // First request creates session and completes (decrements inFlight)
+      await httpRequest('https://example.com/page1');
+      const sessionsCreatedBefore = mockSessionOptions.length;
+
+      // Advance past SESSION_MAX_AGE_MS (1 hour)
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1);
+
+      // Next request should trigger session recycling
+      await httpRequest('https://example.com/page2');
+      const sessionsCreatedAfter = mockSessionOptions.length;
+
+      // A new session should have been created (recycled)
+      expect(sessionsCreatedAfter).toBeGreaterThan(sessionsCreatedBefore);
+      // Old session should have been closed
+      expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('defers recycling when session has in-flight requests', async () => {
+      vi.useFakeTimers();
+
+      // First mock never resolves (simulates long-running request)
+      // Use a very long timeout (2 hours) to prevent the request timeout from
+      // firing before SESSION_MAX_AGE_MS when we advance time
+      let resolveSlowRequest!: (value: unknown) => void;
+      mockGet.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSlowRequest = resolve;
+          })
+      );
+
+      // Start request but don't await — keeps inFlightRequests > 0
+      // Use timeoutMs of 2 hours so it won't time out when we advance by 1 hour
+      const slowPromise = httpRequest(
+        'https://example.com/slow',
+        {},
+        undefined,
+        2 * 60 * 60 * 1000
+      );
+
+      // Advance past max age
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1);
+
+      // Snapshot close count before the fast request — closeAllSessions() in
+      // beforeEach may have already called mockClose during cleanup of the
+      // previous test's cached sessions.
+      const closedBeforeFast = mockClose.mock.calls.length;
+
+      // Fast request should reuse the same session (recycling deferred)
+      mockGet.mockResolvedValueOnce({
+        ok: true,
+        statusCode: 200,
+        text: '<html>Fast</html>',
+        headers: {},
+        cookies: [],
+      });
+      await httpRequest('https://example.com/fast', {}, undefined, 2 * 60 * 60 * 1000);
+
+      // Session should NOT have been closed during fast request (in-flight deferral)
+      expect(mockClose.mock.calls.length).toBe(closedBeforeFast);
+
+      // Now complete the slow request
+      resolveSlowRequest({
+        ok: true,
+        statusCode: 200,
+        text: '<html>Slow done</html>',
+        headers: {},
+        cookies: [],
+      });
+      await slowPromise;
+
+      // Next request should now recycle since inFlight is 0
+      mockGet.mockResolvedValueOnce({
+        ok: true,
+        statusCode: 200,
+        text: '<html>After recycle</html>',
+        headers: {},
+        cookies: [],
+      });
+      await httpRequest('https://example.com/after', {}, undefined, 2 * 60 * 60 * 1000);
+      expect(mockClose.mock.calls.length).toBeGreaterThan(closedBeforeFast);
+    });
+
+    it('evicts LRU session when cache reaches MAX_SESSIONS', async () => {
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      // Fill cache with 50 sessions using different presets
+      for (let i = 0; i < 50; i++) {
+        await httpRequest('https://example.com/page', {}, `preset_${i}`);
+      }
+
+      const closedBefore = mockClose.mock.calls.length;
+
+      // 51st session should trigger LRU eviction
+      await httpRequest('https://example.com/page', {}, 'preset_new');
+
+      // At least one session should have been evicted and closed
+      expect(mockClose.mock.calls.length).toBeGreaterThan(closedBefore);
+    });
+  });
+
   describe('httpRequest with cookies', () => {
     beforeEach(() => {
       mockDnsIPv4Only('93.184.216.34');

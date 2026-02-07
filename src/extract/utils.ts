@@ -30,15 +30,20 @@ export function meetsThreshold(result: ExtractionResult | null, threshold: numbe
   return result !== null && (result.textContent?.length ?? 0) >= threshold;
 }
 
+/** Regex matching CJK characters (CJK Unified, Hiragana, Katakana, Hangul, fullwidth forms). */
+const CJK_CHAR =
+  /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]/g;
+
 /**
- * Count words in text
+ * Count words in text. CJK characters are counted individually since
+ * CJK scripts do not use whitespace to delimit words.
  */
 export function countWords(text: string | null): number {
   if (!text) return 0;
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w.length > 0).length;
+  // Insert spaces around CJK characters so each counts as a separate word,
+  // then perform a standard whitespace-based word count.
+  const spaced = text.replace(CJK_CHAR, ' $& ');
+  return spaced.trim().split(/\s+/).filter(Boolean).length;
 }
 
 /** Elements to strip from API-sourced HTML. */
