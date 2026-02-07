@@ -213,10 +213,12 @@ function formatDate(dateStr: string): string {
 }
 
 function getRecentRunIds(db: Database, limit: number, sinceTimestamp: number = 0): string[] {
-  const sinceClause = sinceTimestamp > 0 ? `AND started_at >= ${sinceTimestamp}` : '';
+  const sinceClause =
+    sinceTimestamp > 0 ? `AND started_at >= '${new Date(sinceTimestamp).toISOString()}'` : '';
   const result = db.exec(`
     SELECT run_id FROM test_runs
-    WHERE total_tests IS NOT NULL AND total_tests > 0
+    WHERE total_tests IS NOT NULL AND typeof(total_tests) = 'integer' AND total_tests > 0
+      AND started_at LIKE '____-__-__T%'
       ${sinceClause}
     ORDER BY started_at DESC
     LIMIT ${limit}
