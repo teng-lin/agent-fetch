@@ -15,6 +15,8 @@ npm run build         # TypeScript compilation
 
 ## Before Committing or Creating a PR
 
+**Do not create a PR without explicit user confirmation.** Always ask before running `gh pr create`.
+
 Run all checks — all four must pass:
 
 ```bash
