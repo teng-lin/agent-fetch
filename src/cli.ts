@@ -113,7 +113,7 @@ export function parseCookies(
       if (eqIdx === -1) continue;
       const name = trimmed.slice(0, eqIdx).trim();
       const value = trimmed.slice(eqIdx + 1).trim();
-      if (name) cookies[name] = value;
+      if (name) cookies[name] = value.replace(/[\r\n\0]/g, '');
     }
   }
 
@@ -428,8 +428,8 @@ export async function main(): Promise<void> {
 
   try {
     // Local PDF file: read from disk and extract
-    const isLocalFile = !opts.url.startsWith('http://') && !opts.url.startsWith('https://');
-    if (isLocalFile && opts.url.toLowerCase().endsWith('.pdf')) {
+    const isHttpUrl = /^https?:\/\//i.test(opts.url);
+    if (!isHttpUrl && opts.url.toLowerCase().endsWith('.pdf')) {
       const filePath = resolve(opts.url);
       if (!existsSync(filePath)) {
         console.error(`Error: File not found: ${filePath}`);
@@ -469,6 +469,11 @@ export async function main(): Promise<void> {
       console.log('---');
       console.log(body);
       return;
+    }
+
+    if (!isHttpUrl) {
+      console.error('Error: URL must start with http:// or https://');
+      process.exit(1);
     }
 
     const cookies = parseCookies(opts.cookie);

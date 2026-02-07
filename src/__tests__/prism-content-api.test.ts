@@ -272,7 +272,10 @@ describe('parseArcAnsContent', () => {
         { type: 'text', content: `<p>${filler(GOOD_CONTENT_LENGTH + 100)}</p>` },
         { type: 'raw_html', content: '<script>alert("xss")</script><p>Safe content</p>' },
         { type: 'raw_html', content: '<style>body{display:none}</style><p>More safe</p>' },
-        { type: 'raw_html', content: '<iframe src="https://evil.com"></iframe><p>Also safe</p>' },
+        {
+          type: 'raw_html',
+          content: '<iframe src="https://evil.example.com"></iframe><p>Also safe</p>',
+        },
       ],
     });
     const result = parseArcAnsContent(ans);

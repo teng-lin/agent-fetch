@@ -4,7 +4,7 @@
  */
 import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
-import unfluff from 'unfluff';
+
 import { extractContent } from '@wrtnlabs/web-content-extractor';
 import {
   type ExtractionResult,
@@ -435,7 +435,7 @@ function composeMetadata(
   return composed;
 }
 
-const PLAIN_TEXT_METHODS = new Set(['unfluff', 'next-data', 'next-rsc']);
+const PLAIN_TEXT_METHODS = new Set(['next-data', 'next-rsc']);
 
 /**
  * Methods that skip post-extraction cleanup. These either produce plain text
@@ -453,15 +453,16 @@ const SKIP_CLEANUP_METHODS = new Set([
 
 /**
  * Populate the `markdown` field on an ExtractionResult.
- * Plain-text methods (unfluff, next-data, next-rsc) have no HTML to convert,
+ * Plain-text methods (next-data, next-rsc) have no HTML to convert,
  * so `textContent` is used as-is. HTML-based methods get converted via Turndown.
  */
 function withMarkdown(result: ExtractionResult): ExtractionResult {
-  const markdown = PLAIN_TEXT_METHODS.has(result.method)
-    ? result.textContent
-    : result.content
-      ? htmlToMarkdown(result.content)
-      : null;
+  let markdown: string | null = null;
+  if (PLAIN_TEXT_METHODS.has(result.method)) {
+    markdown = result.textContent;
+  } else if (result.content) {
+    markdown = htmlToMarkdown(result.content);
+  }
   return { ...result, markdown };
 }
 
@@ -879,36 +880,7 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
 }
 
 /**
- * Strategy 5: Extract using unfluff (python-goose port)
- * Different heuristics than Readability, good for unusual HTML structures
- */
-export function tryUnfluffExtraction(html: string, url: string): ExtractionResult | null {
-  try {
-    const result = unfluff(html);
-
-    if (!result.text || result.text.length < MIN_CONTENT_LENGTH) {
-      return null;
-    }
-
-    return {
-      title: result.title ?? null,
-      byline: result.author?.join(', ') ?? null,
-      content: result.text, // unfluff returns plain text, not HTML
-      textContent: result.text,
-      excerpt: result.description ?? generateExcerpt(null, result.text),
-      siteName: result.publisher ?? null,
-      publishedTime: result.date ?? null,
-      lang: result.lang ?? null,
-      method: 'unfluff',
-    };
-  } catch (e) {
-    logger.debug({ url, error: String(e) }, 'Unfluff extraction failed');
-    return null;
-  }
-}
-
-/**
- * Strategy 6: Extract using text density analysis (CETD algorithm).
+ * Strategy 5: Extract using text density analysis (CETD algorithm).
  * Statistical approach based on text-to-tag density ratios per DOM node.
  * Complementary to Readability's heuristic class/id scoring.
  */
@@ -962,7 +934,7 @@ function isNaturalLanguage(text: string): boolean {
 }
 
 /**
- * Strategy 7: Extract from Next.js RSC (React Server Components) streaming payload.
+ * Strategy 6: Extract from Next.js RSC (React Server Components) streaming payload.
  * App Router pages embed article text inside self.__next_f.push() script calls
  * rather than rendering it into the DOM.
  */
@@ -1218,7 +1190,6 @@ export function extractFromHtml(
   }
   const selectorResult = trySelectorExtraction(document, url);
   const textDensityResult = tryTextDensityExtraction(html, url);
-  const unfluffResult = tryUnfluffExtraction(html, url);
   const rscResult = tryNextRscExtraction(html, url);
   const nuxtResult = tryNuxtPayloadExtraction(html, url);
   const reactRouterResult = tryReactRouterHydrationExtraction(html, url, document);
@@ -1261,7 +1232,6 @@ export function extractFromHtml(
     jsonLdResult,
     selectorResult,
     textDensityResult,
-    unfluffResult,
     rscResult,
     nuxtResult,
     reactRouterResult,
@@ -1302,7 +1272,6 @@ export function extractFromHtml(
     jsonLdResult,
     selectorResult,
     textDensityResult,
-    unfluffResult,
   ];
 
   for (const result of fallbackCandidates) {
@@ -1321,8 +1290,7 @@ export function extractFromHtml(
     nextDataResult ??
     jsonLdResult ??
     selectorResult ??
-    textDensityResult ??
-    unfluffResult;
+    textDensityResult;
   if (partialResult) {
     return finalizeResult(composeMetadata(partialResult, allResults, jsonLdMeta));
   }

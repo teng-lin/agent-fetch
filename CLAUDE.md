@@ -47,7 +47,7 @@ src/
     content-validator.ts  #   Response validation (challenge pages, content types)
     types.ts
   extract/                # Multi-strategy content extraction
-    content-extractors.ts #   5 strategies: Next.js, JSON-LD, Readability, CSS selectors, unfluff
+    content-extractors.ts #   Strategies: Next.js, JSON-LD, Readability, CSS selectors, text-density, RSC
     utils.ts              #   Extraction helpers
     types.ts
   sites/                  # Site-specific configurations

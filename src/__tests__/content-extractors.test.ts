@@ -9,7 +9,6 @@ import {
   trySelectorExtraction,
   tryJsonLdExtraction,
   tryNextDataExtraction,
-  tryUnfluffExtraction,
   tryTextDensityExtraction,
   tryNextRscExtraction,
   extractFromHtml,
@@ -455,24 +454,6 @@ describe('content-extractors', () => {
     });
   });
 
-  describe('tryUnfluffExtraction', () => {
-    it('extracts from well-structured article HTML', () => {
-      const content = loremText(GOOD_CONTENT_LENGTH);
-      const html = `<html><head><title>Unfluff Test</title></head><body><article><p>${content}</p></article></body></html>`;
-      const result = tryUnfluffExtraction(html, 'https://example.com/article');
-      expect(result).not.toBeNull();
-      expect(result!.method).toBe('unfluff');
-    });
-
-    it('returns null for minimal HTML', () => {
-      const result = tryUnfluffExtraction(
-        '<html><body><p>Short</p></body></html>',
-        'https://example.com/short'
-      );
-      expect(result).toBeNull();
-    });
-  });
-
   describe('tryTextDensityExtraction', () => {
     it('extracts article content using text density', () => {
       const content = loremText(GOOD_CONTENT_LENGTH);
@@ -851,7 +832,7 @@ describe('content-extractors', () => {
 
     it('returns null when API URL is a different origin (SSRF prevention)', () => {
       const doc = makeDoc(`<html><head>
-        <link rel="alternate" type="application/json" href="https://evil.com/wp-json/wp/v2/posts/123" />
+        <link rel="alternate" type="application/json" href="https://evil.example.com/wp-json/wp/v2/posts/123" />
       </head><body></body></html>`);
       expect(detectWpRestApi(doc, pageUrl)).toBeNull();
     });
