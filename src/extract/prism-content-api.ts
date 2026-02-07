@@ -69,7 +69,7 @@ export function buildPrismContentApiUrl(config: PrismApiConfig, url: string): st
       return null;
     }
   } catch (e) {
-    logger.debug({ error: String(e), url }, 'Failed to parse Prism API URL');
+    logger.debug({ err: e, url }, 'Failed to parse Prism API URL');
     return null;
   }
 

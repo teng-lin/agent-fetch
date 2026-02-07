@@ -127,6 +127,16 @@ describe('extract/utils', () => {
       expect(result).not.toContain('javascript:');
     });
 
+    it('strips vbscript: URIs', () => {
+      const result = sanitizeHtml('<a href="vbscript:MsgBox(1)">click</a>');
+      expect(result).not.toContain('vbscript:');
+    });
+
+    it('strips data: URIs', () => {
+      const result = sanitizeHtml('<a href="data:text/html,<script>alert(1)</script>">click</a>');
+      expect(result).not.toContain('data:');
+    });
+
     it('preserves safe content', () => {
       const html = '<p>Hello <strong>world</strong></p>';
       expect(sanitizeHtml(html)).toBe(html);
