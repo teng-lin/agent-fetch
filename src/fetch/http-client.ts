@@ -142,10 +142,11 @@ export async function validateSSRF(url: string): Promise<string[]> {
 
 /** Run SSRF validation with a timeout to prevent DoS from slow DNS lookups. */
 function validateSSRFWithTimeout(url: string): Promise<string[]> {
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('DNS resolution timed out')), DNS_TIMEOUT_MS)
-  );
-  return Promise.race([validateSSRF(url), timeout]);
+  let timeoutId: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('DNS resolution timed out')), DNS_TIMEOUT_MS);
+  });
+  return Promise.race([validateSSRF(url), timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 /**
