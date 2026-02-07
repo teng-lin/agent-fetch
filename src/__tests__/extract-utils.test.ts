@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { getNestedValue, meetsThreshold, countWords } from '../extract/utils.js';
+import {
+  getNestedValue,
+  meetsThreshold,
+  countWords,
+  sanitizeHtml,
+  htmlToText,
+} from '../extract/utils.js';
 import type { ExtractionResult } from '../extract/types.js';
 
 describe('extract/utils', () => {
@@ -87,6 +93,60 @@ describe('extract/utils', () => {
 
     it('returns 0 for whitespace-only string', () => {
       expect(countWords('   \t\n  ')).toBe(0);
+    });
+  });
+
+  describe('sanitizeHtml', () => {
+    it('removes script tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><script>alert(1)</script>')).toBe('<p>Safe</p>');
+    });
+
+    it('removes style tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><style>body{display:none}</style>')).toBe('<p>Safe</p>');
+    });
+
+    it('removes iframe tags', () => {
+      expect(sanitizeHtml('<p>Safe</p><iframe src="https://example.com"></iframe>')).toBe(
+        '<p>Safe</p>'
+      );
+    });
+
+    it('strips event handler attributes', () => {
+      const result = sanitizeHtml('<img src="x.jpg" onerror="alert(1)">');
+      expect(result).not.toContain('onerror');
+      expect(result).toContain('src="x.jpg"');
+    });
+
+    it('strips javascript: URIs', () => {
+      const result = sanitizeHtml('<a href="javascript:alert(1)">click</a>');
+      expect(result).not.toContain('javascript:');
+    });
+
+    it('preserves safe content', () => {
+      const html = '<p>Hello <strong>world</strong></p>';
+      expect(sanitizeHtml(html)).toBe(html);
+    });
+
+    it('returns original html for empty input', () => {
+      expect(sanitizeHtml('')).toBe('');
+    });
+  });
+
+  describe('htmlToText', () => {
+    it('strips HTML tags and returns text', () => {
+      expect(htmlToText('<p>Hello <strong>world</strong></p>')).toBe('Hello world');
+    });
+
+    it('returns empty string for empty input', () => {
+      expect(htmlToText('')).toBe('');
+    });
+
+    it('trims whitespace', () => {
+      expect(htmlToText('<p>  hello  </p>')).toBe('hello');
+    });
+
+    it('handles text-only input', () => {
+      expect(htmlToText('plain text')).toBe('plain text');
     });
   });
 });

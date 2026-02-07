@@ -217,12 +217,14 @@ export function extractMedia(contentHtml: string, baseUrl: string): MediaElement
       switch (tagName) {
         case 'IMG': {
           const src = resolveUrl(getBestImageSrc(el), baseUrl);
-          const alt = el.getAttribute('alt');
-          addIfUnseen(media, seen, src, {
-            type: 'image',
-            src: src!,
-            alt: alt || undefined,
-          });
+          if (src) {
+            const alt = el.getAttribute('alt');
+            addIfUnseen(media, seen, src, {
+              type: 'image',
+              src,
+              alt: alt || undefined,
+            });
+          }
           break;
         }
 
@@ -231,19 +233,23 @@ export function extractMedia(contentHtml: string, baseUrl: string): MediaElement
           const ext = getDocumentExtension(href);
           if (ext) {
             const resolved = resolveUrl(href, baseUrl);
-            addIfUnseen(media, seen, resolved, {
-              type: 'document',
-              href: resolved!,
-              text: el.textContent?.trim() || undefined,
-              extension: ext,
-            });
+            if (resolved) {
+              addIfUnseen(media, seen, resolved, {
+                type: 'document',
+                href: resolved,
+                text: el.textContent?.trim() || undefined,
+                extension: ext,
+              });
+            }
           }
           break;
         }
 
         case 'VIDEO': {
           const src = resolveUrl(el.getAttribute('src'), baseUrl);
-          addIfUnseen(media, seen, src, { type: 'video', src: src! });
+          if (src) {
+            addIfUnseen(media, seen, src, { type: 'video', src });
+          }
           break;
         }
 
@@ -261,7 +267,9 @@ export function extractMedia(contentHtml: string, baseUrl: string): MediaElement
 
         case 'AUDIO': {
           const src = resolveUrl(el.getAttribute('src'), baseUrl);
-          addIfUnseen(media, seen, src, { type: 'audio', src: src! });
+          if (src) {
+            addIfUnseen(media, seen, src, { type: 'audio', src });
+          }
           break;
         }
       }

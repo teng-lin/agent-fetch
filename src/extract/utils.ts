@@ -1,6 +1,8 @@
 /**
  * Utility functions for the extract module
  */
+import { parseHTML } from 'linkedom';
+
 import { type ExtractionResult } from './types.js';
 
 /**
@@ -30,5 +32,37 @@ export function meetsThreshold(result: ExtractionResult | null, threshold: numbe
  */
 export function countWords(text: string | null): number {
   if (!text) return 0;
-  return text.split(/\s+/).filter((w) => w.length > 0).length;
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 0).length;
+}
+
+/** Elements to strip from API-sourced HTML. */
+export const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'] as const;
+
+/**
+ * Remove dangerous elements, event handler attributes, and javascript: URIs from HTML.
+ */
+export function sanitizeHtml(html: string): string {
+  const { document } = parseHTML(`<div>${html}</div>`);
+  for (const selector of DANGEROUS_SELECTORS) {
+    for (const el of document.querySelectorAll(selector)) {
+      el.remove();
+    }
+  }
+  for (const el of document.querySelectorAll('*')) {
+    for (const attr of [...el.attributes]) {
+      if (/^on/i.test(attr.name) || /^javascript:/i.test(String(attr.value))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return document.querySelector('div')?.innerHTML ?? html;
+}
+
+/** Strip HTML tags and return plain text content. */
+export function htmlToText(html: string): string {
+  const { document } = parseHTML(`<div>${html}</div>`);
+  return document.querySelector('div')?.textContent?.trim() ?? '';
 }

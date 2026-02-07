@@ -3,11 +3,10 @@
  * Detects WordPress sites that load article content via AJAX POST
  * requests to admin-ajax.php and fetches it directly.
  */
-import { parseHTML } from 'linkedom';
-
 import { htmlToMarkdown } from './markdown.js';
 import type { ExtractionResult } from './types.js';
 import { GOOD_CONTENT_LENGTH } from './types.js';
+import { htmlToText, sanitizeHtml } from './utils.js';
 import { logger } from '../logger.js';
 
 export interface WpAjaxConfig {
@@ -33,9 +32,6 @@ const AJAX_URL_PATTERN =
 /** Match article ID assignments (UUID or numeric). */
 const ARTICLE_ID_PATTERN =
   /\b(?:article_id|articleId|post_id)\s*=\s*['"]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)['"]/i;
-
-/** Dangerous elements to strip from AJAX-sourced HTML. */
-const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
 
 /**
  * Detect WP AJAX content configuration from raw HTML.
@@ -100,25 +96,8 @@ export function parseWpAjaxResponse(html: string, _pageUrl: string): ExtractionR
       // Not JSON — treat as raw HTML
     }
 
-    // Sanitize HTML: strip dangerous elements and event handler attributes
-    const { document } = parseHTML(`<div>${contentHtml}</div>`);
-    for (const selector of DANGEROUS_SELECTORS) {
-      for (const el of document.querySelectorAll(selector)) {
-        el.remove();
-      }
-    }
-    // Strip event handler attributes (onerror, onload, etc.) and javascript: URIs
-    for (const el of document.querySelectorAll('*')) {
-      for (const attr of [...el.attributes]) {
-        if (/^on/i.test(attr.name) || /^javascript:/i.test(String(attr.value))) {
-          el.removeAttribute(attr.name);
-        }
-      }
-    }
-
-    const wrapper = document.querySelector('div');
-    const sanitizedHtml = wrapper?.innerHTML ?? contentHtml;
-    const textContent = wrapper?.textContent?.trim() ?? '';
+    const sanitizedHtml = sanitizeHtml(contentHtml);
+    const textContent = htmlToText(sanitizedHtml);
 
     if (textContent.length < GOOD_CONTENT_LENGTH) return null;
 
