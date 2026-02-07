@@ -8,6 +8,7 @@ import { parseHTML } from 'linkedom';
 import { htmlToMarkdown } from './markdown.js';
 import type { ExtractionResult } from './types.js';
 import { GOOD_CONTENT_LENGTH } from './types.js';
+import { htmlToText, sanitizeHtml } from './utils.js';
 import { logger } from '../logger.js';
 
 export interface PrismApiConfig {
@@ -49,35 +50,54 @@ export function detectPrismContentApi(html: string): PrismApiConfig | null {
 
 /**
  * Build the Prism content API URL for a given page URL.
+ * Returns null if the API domain does not share the same site as the page (SSRF protection).
  */
-export function buildPrismContentApiUrl(config: PrismApiConfig, url: string): string {
-  const pathname = new URL(url).pathname;
-  const query = JSON.stringify({ canonical_url: pathname });
+export function buildPrismContentApiUrl(config: PrismApiConfig, url: string): string | null {
   const apiBase = config.apiDomain.startsWith('http')
     ? config.apiDomain
     : `https://${config.apiDomain}`;
+
+  // SSRF protection: reject API domains that don't share the page's registered domain
+  try {
+    const pageHost = new URL(url).hostname;
+    const apiHost = new URL(apiBase).hostname;
+    if (!isSameSite(apiHost, pageHost)) {
+      logger.debug(
+        { url, apiDomain: config.apiDomain },
+        'Prism API domain is cross-site, rejecting'
+      );
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const pathname = new URL(url).pathname;
+  const query = JSON.stringify({ canonical_url: pathname });
   const websiteParam = config.website ? `_website=${encodeURIComponent(config.website)}&` : '';
   return `${apiBase}/api/${config.contentSource}?${websiteParam}query=${encodeURIComponent(query)}`;
 }
 
-/** Strip HTML tags and decode entities by parsing a fragment and returning its text content. */
-function htmlToText(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  return document.querySelector('div')?.textContent?.trim() ?? '';
-}
-
-/** Dangerous elements to strip from API-sourced HTML. */
-const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
-
-/** Remove script, style, and iframe elements from HTML to prevent XSS. */
-function sanitizeHtml(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  for (const selector of DANGEROUS_SELECTORS) {
-    for (const el of document.querySelectorAll(selector)) {
-      el.remove();
-    }
-  }
-  return document.querySelector('div')?.innerHTML ?? html;
+/**
+ * Check if two hostnames belong to the same site by comparing the last two
+ * domain labels (e.g. api.example.com and www.example.com both share example.com).
+ *
+ * IP addresses and single-label hosts (e.g. localhost) require exact match.
+ *
+ * Limitation: without a public suffix list, multi-level TLDs like .co.uk are
+ * treated as registrable domains, so evil.co.uk and victim.co.uk would match.
+ * In practice this is acceptable because: (1) Arc/Prism sites use standard TLDs,
+ * and (2) httpcloak's SSRF protection blocks private IPs at the network level.
+ */
+function isSameSite(a: string, b: string): boolean {
+  if (a === b) return true;
+  // IP addresses and single-label hosts must match exactly
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(a) || /^\d+\.\d+\.\d+\.\d+$/.test(b)) return false;
+  if (/^[\d:[\]]+$/.test(a) || /^[\d:[\]]+$/.test(b)) return false;
+  const partsA = a.split('.');
+  const partsB = b.split('.');
+  if (partsA.length < 2 || partsB.length < 2) return false;
+  return partsA.slice(-2).join('.') === partsB.slice(-2).join('.');
 }
 
 /**

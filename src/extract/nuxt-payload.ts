@@ -10,6 +10,7 @@ import { parseHTML } from 'linkedom';
 import { htmlToMarkdown } from './markdown.js';
 import type { ExtractionResult } from './types.js';
 import { GOOD_CONTENT_LENGTH } from './types.js';
+import { htmlToText, sanitizeHtml } from './utils.js';
 import { logger } from '../logger.js';
 
 const CONTENT_TYPES = new Set([
@@ -70,23 +71,6 @@ export function extractParagraphs(payload: unknown[]): NuxtParagraph[] {
   }
 
   return paragraphs;
-}
-
-function htmlToText(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  return document.querySelector('div')?.textContent?.trim() ?? '';
-}
-
-const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
-
-function sanitizeHtml(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  for (const selector of DANGEROUS_SELECTORS) {
-    for (const el of document.querySelectorAll(selector)) {
-      el.remove();
-    }
-  }
-  return document.querySelector('div')?.innerHTML ?? html;
 }
 
 function wrapParagraphHtml(para: NuxtParagraph): string {

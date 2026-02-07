@@ -14,7 +14,7 @@ import {
   DEFAULT_EXCERPT_LENGTH,
 } from './types.js';
 import { htmlToMarkdown } from './markdown.js';
-import { meetsThreshold } from './utils.js';
+import { getNestedValue, meetsThreshold, sanitizeHtml } from './utils.js';
 import { sitePreferJsonLd, siteUseNextData, getSiteNextDataPath } from '../sites/site-config.js';
 import { tryNuxtPayloadExtraction } from './nuxt-payload.js';
 import { tryReactRouterHydrationExtraction } from './react-router-hydration.js';
@@ -467,18 +467,6 @@ function withMarkdown(result: ExtractionResult): ExtractionResult {
 }
 
 /**
- * Get a value from an object by dot-notation path (e.g., "props.pageProps.paragraph.0.description")
- */
-function getByPath(obj: unknown, path: string): unknown {
-  let current: unknown = obj;
-  for (const part of path.split('.')) {
-    if (current == null || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
-/**
  * Extract text content from HTML string
  */
 function extractTextFromHtml(html: string): string {
@@ -647,20 +635,6 @@ function extractContentBlockMetadata(
   return { title, byline, excerpt, publishedTime };
 }
 
-/** Dangerous elements to strip from API-sourced HTML. */
-const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
-
-/** Remove script, style, and iframe elements from HTML to prevent XSS. */
-function sanitizeHtml(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  for (const selector of DANGEROUS_SELECTORS) {
-    for (const el of document.querySelectorAll(selector)) {
-      el.remove();
-    }
-  }
-  return document.querySelector('div')?.innerHTML ?? html;
-}
-
 /**
  * Try to extract an ExtractionResult from a string body (HTML or plain text).
  * Shared by both the custom-path and auto-detect branches of tryNextDataExtraction.
@@ -716,7 +690,7 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
     // Try site-specific path first
     const customPath = getSiteNextDataPath(url);
     if (customPath) {
-      const content = getByPath(data, customPath);
+      const content = getNestedValue(data, customPath);
 
       // Handle array of content blocks
       if (Array.isArray(content)) {
@@ -770,7 +744,7 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
 
     // Auto-detect: Probe common content paths for content block arrays or string bodies
     for (const path of NEXT_DATA_CONTENT_PATHS) {
-      const content = getByPath(data, path);
+      const content = getNestedValue(data, path);
       if (isContentBlockArray(content)) {
         const textContent = extractTextFromContentBlocks(
           content.filter((item): item is ContentBlock => item && typeof item === 'object')
@@ -795,7 +769,7 @@ export function tryNextDataExtraction(document: Document, url: string): Extracti
       // Handle string content (HTML or plain text)
       if (typeof content === 'string') {
         const parentPath = path.split('.').slice(0, -1).join('.');
-        const parent = (getByPath(data, parentPath) ?? {}) as Record<string, unknown>;
+        const parent = (getNestedValue(data, parentPath) ?? {}) as Record<string, unknown>;
         // Fall back to pageProps.title when parent has no title fields
         const metaWithFallback = { ...parent, title: parent.title ?? pageProps.title };
         const result = tryStringBodyExtraction(content, metaWithFallback, document);

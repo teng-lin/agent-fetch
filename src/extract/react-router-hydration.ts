@@ -6,11 +6,10 @@
  * often include the full article body as HTML, even when the visible DOM
  * only renders a truncated preview.
  */
-import { parseHTML } from 'linkedom';
-
 import { logger } from '../logger.js';
 import type { ExtractionResult } from './types.js';
 import { GOOD_CONTENT_LENGTH } from './types.js';
+import { htmlToText, sanitizeHtml } from './utils.js';
 
 const HYDRATION_PATTERN =
   /window\.__staticRouterHydrationData\s*=\s*JSON\.parse\("((?:[^"\\]|\\.)*)"\)/;
@@ -166,24 +165,6 @@ export function extractMetadataFromParent(parent: Record<string, unknown>): Hydr
     getString(parent, 'publishedTime');
 
   return { title, byline, excerpt, publishedTime };
-}
-
-const DANGEROUS_SELECTORS = ['script', 'style', 'iframe'];
-
-/** Remove script, style, and iframe elements from an HTML fragment. */
-function sanitizeHtml(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  for (const selector of DANGEROUS_SELECTORS) {
-    for (const el of document.querySelectorAll(selector)) {
-      el.remove();
-    }
-  }
-  return document.querySelector('div')?.innerHTML?.trim() ?? '';
-}
-
-function htmlToText(html: string): string {
-  const { document } = parseHTML(`<div>${html}</div>`);
-  return document.querySelector('div')?.textContent?.trim() ?? '';
 }
 
 /**

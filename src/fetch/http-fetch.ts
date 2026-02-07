@@ -628,6 +628,7 @@ async function tryPrismContentApiFallback(
   if (!config) return null;
 
   const apiUrl = buildPrismContentApiUrl(config, url);
+  if (!apiUrl) return null;
   logger.debug({ url, apiUrl }, 'Detected Prism content API, trying extraction');
 
   const result = await tryPrismContentApiExtraction(apiUrl, ctx);

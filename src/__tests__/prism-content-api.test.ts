@@ -197,6 +197,46 @@ describe('buildPrismContentApiUrl', () => {
     expect(url).not.toContain('_website');
     expect(url).toContain('query=');
   });
+
+  it('returns null when API domain is a different site (SSRF prevention)', () => {
+    const crossSiteConfig = {
+      apiDomain: 'https://evil.example.com',
+      contentSource: 'content-api-v4',
+      website: 'site',
+    };
+    expect(
+      buildPrismContentApiUrl(crossSiteConfig, 'https://www.news.example.org/article')
+    ).toBeNull();
+  });
+
+  it('allows API on sibling subdomain of the same site', () => {
+    const siblingConfig = {
+      apiDomain: 'https://api.news.example.org',
+      contentSource: 'content-api-v4',
+      website: 'site',
+    };
+    const url = buildPrismContentApiUrl(siblingConfig, 'https://www.news.example.org/article');
+    expect(url).not.toBeNull();
+    expect(url).toContain('api.news.example.org');
+  });
+
+  it('rejects cross-site IP addresses', () => {
+    const ipConfig = {
+      apiDomain: 'https://192.168.1.1',
+      contentSource: 'content-api-v4',
+      website: 'site',
+    };
+    expect(buildPrismContentApiUrl(ipConfig, 'https://192.168.1.2/article')).toBeNull();
+  });
+
+  it('allows same IP address', () => {
+    const ipConfig = {
+      apiDomain: 'https://10.0.0.1',
+      contentSource: 'content-api-v4',
+      website: 'site',
+    };
+    expect(buildPrismContentApiUrl(ipConfig, 'https://10.0.0.1/article')).not.toBeNull();
+  });
 });
 
 describe('parseArcAnsContent', () => {
