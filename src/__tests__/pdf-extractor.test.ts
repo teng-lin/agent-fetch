@@ -160,6 +160,8 @@ describe('fetchRemotePdfBuffer', () => {
       'https://example.com/doc.pdf',
       { Accept: 'application/pdf,*/*' },
       undefined,
+      undefined,
+      undefined,
       undefined
     );
   });
@@ -179,7 +181,9 @@ describe('fetchRemotePdfBuffer', () => {
       'https://example.com/doc.pdf',
       { Accept: 'application/pdf,*/*' },
       'chrome-143',
-      5000
+      5000,
+      undefined,
+      undefined
     );
   });
 

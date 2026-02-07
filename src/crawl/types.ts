@@ -14,6 +14,8 @@ export interface CrawlOptions extends SelectorOptions {
   delay?: number;
   preset?: string;
   timeout?: number;
+  proxy?: string;
+  cookies?: Record<string, string>;
 }
 
 export interface CrawlResult extends FetchResult {

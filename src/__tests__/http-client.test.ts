@@ -4,6 +4,7 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockClose = vi.fn();
 let mockSessionConstructor: (() => void) | undefined;
+const mockSessionOptions: Record<string, unknown>[] = [];
 
 vi.mock('../logger.js', () => ({
   logger: {
@@ -27,7 +28,8 @@ vi.mock('httpcloak', () => ({
       get = mockGet;
       post = mockPost;
       close = mockClose;
-      constructor() {
+      constructor(opts?: Record<string, unknown>) {
+        mockSessionOptions.push(opts ?? {});
         if (mockSessionConstructor) mockSessionConstructor();
       }
     },
@@ -69,6 +71,7 @@ function mockDnsFailure(): void {
 describe('fetch/http-client', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockSessionOptions.length = 0;
     await closeAllSessions();
   });
 
@@ -442,6 +445,197 @@ describe('fetch/http-client', () => {
       const result = await resultPromise;
       expect(result.success).toBe(false);
       expect(result.error).toContain('DNS resolution timed out');
+    });
+  });
+
+  describe('getSession with proxy', () => {
+    it('returns different sessions for different proxies', async () => {
+      const session1 = await getSession(undefined, 'http://proxy1.example.com:8080');
+      const session2 = await getSession(undefined, 'http://proxy2.example.com:8080');
+      expect(session1).not.toBe(session2);
+    });
+
+    it('returns cached session for same proxy', async () => {
+      const session1 = await getSession(undefined, 'http://proxy.example.com:8080');
+      const session2 = await getSession(undefined, 'http://proxy.example.com:8080');
+      expect(session1).toBe(session2);
+    });
+
+    it('returns different sessions for proxy vs no-proxy', async () => {
+      const sessionDirect = await getSession();
+      const sessionProxy = await getSession(undefined, 'http://proxy.example.com:8080');
+      expect(sessionDirect).not.toBe(sessionProxy);
+    });
+
+    it('passes proxy to Session constructor', async () => {
+      await getSession(undefined, 'http://proxy.example.com:8080');
+      expect(mockSessionOptions).toContainEqual(
+        expect.objectContaining({ proxy: 'http://proxy.example.com:8080' })
+      );
+    });
+
+    it('does not pass proxy when none provided', async () => {
+      await getSession();
+      expect(mockSessionOptions).toHaveLength(1);
+      expect(mockSessionOptions[0]).not.toHaveProperty('proxy');
+    });
+  });
+
+  describe('httpRequest with cookies', () => {
+    beforeEach(() => {
+      mockDnsIPv4Only('93.184.216.34');
+    });
+
+    it('passes cookies via RequestOptions', async () => {
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      await httpRequest('https://example.com/page', {}, undefined, undefined, undefined, {
+        session: 'abc123',
+      });
+
+      expect(mockGet).toHaveBeenCalledWith('https://example.com/page', {
+        headers: { 'Cache-Control': 'no-cache' },
+        cookies: { session: 'abc123' },
+      });
+    });
+
+    it('does not include cookies field when no cookies provided', async () => {
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      await httpRequest('https://example.com/page');
+
+      expect(mockGet).toHaveBeenCalledWith('https://example.com/page', {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+    });
+
+    it('does not include cookies field when cookies is empty object', async () => {
+      mockGet.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: '<html>OK</html>',
+        headers: {},
+        cookies: [],
+      });
+
+      await httpRequest('https://example.com/page', {}, undefined, undefined, undefined, {});
+
+      expect(mockGet).toHaveBeenCalledWith('https://example.com/page', {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+    });
+  });
+
+  describe('304 retry with proxy and cookies', () => {
+    beforeEach(() => {
+      mockDnsIPv4Only('93.184.216.34');
+    });
+
+    it('creates fresh session with proxy on 304 retry', async () => {
+      mockGet
+        .mockResolvedValueOnce({
+          ok: true,
+          statusCode: 304,
+          text: '',
+          headers: {},
+          cookies: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          statusCode: 200,
+          text: '<html>OK</html>',
+          headers: {},
+          cookies: [],
+        });
+
+      mockSessionOptions.length = 0;
+      await httpRequest(
+        'https://example.com/page',
+        {},
+        undefined,
+        undefined,
+        'http://proxy.example.com:8080'
+      );
+
+      // Cached session + fresh 304-retry session: both must have proxy
+      const proxyOptions = mockSessionOptions.filter(
+        (opts) => opts.proxy === 'http://proxy.example.com:8080'
+      );
+      expect(proxyOptions.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('passes cookies on 304 retry request', async () => {
+      mockGet
+        .mockResolvedValueOnce({
+          ok: true,
+          statusCode: 304,
+          text: '',
+          headers: {},
+          cookies: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          statusCode: 200,
+          text: '<html>OK</html>',
+          headers: {},
+          cookies: [],
+        });
+
+      await httpRequest('https://example.com/page', {}, undefined, undefined, undefined, {
+        session: 'abc',
+      });
+
+      // Both original and retry requests should include cookies
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockGet.mock.calls[0][1]).toHaveProperty('cookies', { session: 'abc' });
+      expect(mockGet.mock.calls[1][1]).toHaveProperty('cookies', { session: 'abc' });
+    });
+  });
+
+  describe('httpPost with cookies', () => {
+    beforeEach(() => {
+      mockDnsIPv4Only('93.184.216.34');
+    });
+
+    it('passes cookies via RequestOptions on POST', async () => {
+      mockPost.mockResolvedValue({
+        ok: true,
+        statusCode: 200,
+        text: 'OK',
+        headers: {},
+        cookies: [],
+      });
+
+      await httpPost(
+        'https://example.com/api',
+        { action: 'test' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { auth: 'token123' }
+      );
+
+      expect(mockPost).toHaveBeenCalledWith('https://example.com/api', {
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: { action: 'test' },
+        cookies: { auth: 'token123' },
+      });
     });
   });
 

@@ -34,10 +34,19 @@ export function isPdfContentType(contentType: string | undefined): boolean {
 export async function fetchRemotePdfBuffer(
   url: string,
   preset?: string,
-  timeout?: number
+  timeout?: number,
+  proxy?: string,
+  cookies?: Record<string, string>
 ): Promise<{ buffer: Buffer; statusCode: number } | null> {
   try {
-    const response = await httpRequest(url, { Accept: 'application/pdf,*/*' }, preset, timeout);
+    const response = await httpRequest(
+      url,
+      { Accept: 'application/pdf,*/*' },
+      preset,
+      timeout,
+      proxy,
+      cookies
+    );
 
     if (!response.success || !response.html) {
       logger.debug({ url, statusCode: response.statusCode }, 'Remote PDF fetch failed');

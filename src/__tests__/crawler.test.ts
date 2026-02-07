@@ -229,6 +229,54 @@ describe('crawl orchestrator', () => {
     });
   });
 
+  describe('proxy and cookies', () => {
+    it('passes proxy and cookies to httpFetch', async () => {
+      vi.mocked(httpFetch).mockResolvedValue(
+        mockFetchResult('https://example.com/', { rawHtml: null })
+      );
+
+      const results = await collectResults(
+        crawl('https://example.com/', {
+          maxPages: 1,
+          proxy: 'http://proxy.example.com:8080',
+          cookies: { session: 'abc123' },
+        })
+      );
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(httpFetch).toHaveBeenCalledWith(
+        'https://example.com/',
+        expect.objectContaining({
+          proxy: 'http://proxy.example.com:8080',
+          cookies: { session: 'abc123' },
+        })
+      );
+    });
+
+    it('passes proxy and cookies to simpleFetch for robots.txt', async () => {
+      vi.mocked(httpFetch).mockResolvedValue(
+        mockFetchResult('https://example.com/', { rawHtml: null })
+      );
+
+      await collectResults(
+        crawl('https://example.com/', {
+          maxPages: 1,
+          proxy: 'http://proxy.example.com:8080',
+          cookies: { session: 'abc123' },
+        })
+      );
+
+      // httpRequest is used for robots.txt and sitemap fetches via simpleFetch
+      const robotsCall = vi
+        .mocked(httpRequest)
+        .mock.calls.find((call) => (call[0] as string).includes('robots.txt'));
+      expect(robotsCall).toBeDefined();
+      // proxy is 5th arg (index 4), cookies is 6th arg (index 5)
+      expect(robotsCall![4]).toBe('http://proxy.example.com:8080');
+      expect(robotsCall![5]).toEqual({ session: 'abc123' });
+    });
+  });
+
   describe('failed pages', () => {
     it('counts failed pages in summary', async () => {
       vi.mocked(httpFetch).mockResolvedValue({

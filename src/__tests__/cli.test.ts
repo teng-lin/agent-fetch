@@ -214,6 +214,8 @@ describe('CLI main', () => {
     expect(httpFetch).toHaveBeenCalledWith('https://example.com/article', {
       preset: undefined,
       timeout: undefined,
+      proxy: undefined,
+      cookies: undefined,
     });
     expect(closeAllSessions).toHaveBeenCalled();
   });
@@ -236,6 +238,8 @@ describe('CLI main', () => {
     expect(httpRequest).toHaveBeenCalledWith(
       'https://example.com/article',
       {},
+      undefined,
+      undefined,
       undefined,
       undefined
     );
@@ -281,6 +285,8 @@ describe('CLI main', () => {
     expect(httpFetch).toHaveBeenCalledWith('https://example.com/article', {
       preset: undefined,
       timeout: 5000,
+      proxy: undefined,
+      cookies: undefined,
     });
     expect(closeAllSessions).toHaveBeenCalled();
   });
@@ -300,7 +306,14 @@ describe('CLI main', () => {
     process.argv = ['node', 'cli.js', 'https://example.com/article', '--raw', '--timeout', '3000'];
     await main();
 
-    expect(httpRequest).toHaveBeenCalledWith('https://example.com/article', {}, undefined, 3000);
+    expect(httpRequest).toHaveBeenCalledWith(
+      'https://example.com/article',
+      {},
+      undefined,
+      3000,
+      undefined,
+      undefined
+    );
     expect(closeAllSessions).toHaveBeenCalled();
   });
 });

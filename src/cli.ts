@@ -5,7 +5,7 @@
 import { fileURLToPath } from 'url';
 import { realpathSync, readFileSync, existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
-import { httpFetch } from './fetch/http-fetch.js';
+import { httpFetch, resolveProxy } from './fetch/http-fetch.js';
 import { httpRequest, closeAllSessions } from './fetch/http-client.js';
 import { extractPdfFromBuffer } from './extract/pdf-extractor.js';
 import { crawl } from './crawl/crawler.js';
@@ -34,6 +34,8 @@ interface SharedFlags {
   timeout?: number;
   select?: string;
   remove?: string;
+  proxy?: string;
+  cookie?: string[];
 }
 
 type SharedFlagResult = { handled: true; index: number } | { handled: false } | { error: string };
@@ -77,9 +79,45 @@ function parseSharedFlag(args: string[], i: number, flags: SharedFlags): SharedF
       if (i + 1 >= args.length) return { error: '--remove requires a value' };
       flags.remove = args[++i];
       return { handled: true, index: i };
+    case '--proxy':
+      if (i + 1 >= args.length) return { error: '--proxy requires a value' };
+      flags.proxy = args[++i];
+      return { handled: true, index: i };
+    case '--cookie':
+      if (i + 1 >= args.length) return { error: '--cookie requires a value' };
+      if (!flags.cookie) flags.cookie = [];
+      flags.cookie.push(args[++i]);
+      return { handled: true, index: i };
     default:
       return { handled: false };
   }
+}
+
+/**
+ * Parse cookie strings into a name->value map.
+ * Each string is semicolon-separated pairs of "name=value".
+ * Splits on first `=` only to handle values containing `=`.
+ */
+export function parseCookies(
+  cookieStrings: string[] | undefined
+): Record<string, string> | undefined {
+  if (!cookieStrings || cookieStrings.length === 0) return undefined;
+
+  const cookies: Record<string, string> = {};
+  for (const str of cookieStrings) {
+    const pairs = str.split(';');
+    for (const pair of pairs) {
+      const trimmed = pair.trim();
+      if (!trimmed) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const name = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (name) cookies[name] = value;
+    }
+  }
+
+  return Object.keys(cookies).length > 0 ? cookies : undefined;
 }
 
 interface CliOptions {
@@ -92,6 +130,8 @@ interface CliOptions {
   timeout?: number;
   select?: string;
   remove?: string;
+  proxy?: string;
+  cookie?: string[];
 }
 
 type ParseResult =
@@ -267,6 +307,8 @@ export function parseCrawlArgs(args: string[]): CrawlParseResult {
       delay: delayMs,
       targetSelector: flags.select,
       removeSelector: flags.remove,
+      proxy: flags.proxy,
+      cookies: parseCookies(flags.cookie),
     },
     warnings,
   };
@@ -285,6 +327,8 @@ Options:
   --text              Plain text content only (no metadata, no markdown)
   --select <css>      Extract only elements matching CSS selector
   --remove <css>      Remove elements matching CSS selector before extraction
+  --proxy <url>       HTTP/SOCKS proxy URL (env: AGENT_FETCH_PROXY, HTTPS_PROXY, HTTP_PROXY)
+  --cookie <string>   Cookies to send ("name=value; name2=value2"), repeatable
   --preset <value>    TLS fingerprint preset (e.g. chrome-143, android-chrome-143, ios-safari-18)
   --timeout <ms>      Request timeout in milliseconds (default: 20000)
   -v, --version       Show version number
@@ -427,9 +471,18 @@ export async function main(): Promise<void> {
       return;
     }
 
+    const cookies = parseCookies(opts.cookie);
+
     // --raw mode: fetch HTML without extraction
     if (opts.raw) {
-      const response = await httpRequest(opts.url, {}, opts.preset, opts.timeout);
+      const response = await httpRequest(
+        opts.url,
+        {},
+        opts.preset,
+        opts.timeout,
+        resolveProxy(opts.proxy),
+        cookies
+      );
       if (response.statusCode !== 200) {
         console.error(`HTTP ${response.statusCode}`);
         process.exit(1);
@@ -444,6 +497,8 @@ export async function main(): Promise<void> {
       timeout: opts.timeout,
       targetSelector: opts.select,
       removeSelector: opts.remove,
+      proxy: opts.proxy,
+      cookies,
     });
 
     if (opts.json) {

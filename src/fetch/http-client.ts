@@ -22,11 +22,12 @@ interface HttpcloakCookie {
 interface SessionMetadata {
   promise: Promise<httpcloak.Session>;
   created: number;
+  lastAccessed: number;
   requestCount: number;
   inFlightRequests: number;
 }
 
-/** Session cache keyed by preset string */
+/** Session cache keyed by composite key (preset|proxy) */
 const sessionCache = new Map<string, SessionMetadata>();
 
 /** Mutex locks for session creation */
@@ -39,6 +40,10 @@ const SESSION_MAX_REQUESTS = 10000; // Recycle after 10K requests
 const DEFAULT_REQUEST_TIMEOUT_MS = 20000; // 20 second request timeout
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
 const DNS_TIMEOUT_MS = 5000;
+const MAX_SESSIONS = 50;
+
+/** Allowed proxy URL schemes */
+const VALID_PROXY_SCHEMES = ['http:', 'https:', 'socks5:', 'socks5h:'];
 
 /**
  * Check if an IP address is private/internal.
@@ -143,17 +148,96 @@ function validateSSRFWithTimeout(url: string): Promise<string[]> {
   return Promise.race([validateSSRF(url), timeout]);
 }
 
+/**
+ * Validate a proxy URL: must use an allowed scheme and pass SSRF checks.
+ */
+export async function validateProxyUrl(proxy: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(proxy);
+  } catch {
+    throw new Error(`Invalid proxy URL: ${redactProxyUrl(proxy)}`);
+  }
+
+  if (!VALID_PROXY_SCHEMES.includes(parsed.protocol)) {
+    throw new Error(
+      `Invalid proxy scheme "${parsed.protocol}" — must be one of: ${VALID_PROXY_SCHEMES.join(', ')}`
+    );
+  }
+
+  await validateSSRF(proxy);
+}
+
+/**
+ * Redact credentials from a proxy URL for safe logging.
+ */
+export function redactProxyUrl(proxy: string): string {
+  try {
+    const url = new URL(proxy);
+    if (url.password) url.password = '***';
+    if (url.username) url.username = '***';
+    return url.toString();
+  } catch {
+    return '<invalid-proxy-url>';
+  }
+}
+
+/**
+ * Redact proxy credentials from a composite cache key for safe logging.
+ * Cache keys have the format "preset|proxy_url" or "preset|direct".
+ */
+function redactCacheKey(key: string): string {
+  const sep = key.indexOf('|');
+  if (sep === -1) return key;
+
+  const preset = key.substring(0, sep);
+  const proxy = key.substring(sep + 1);
+
+  return proxy === 'direct' ? key : `${preset}|${redactProxyUrl(proxy)}`;
+}
+
 /** Default TLS preset */
 const DEFAULT_PRESET = httpcloak.Preset.CHROME_143;
 
 /**
- * Get or create httpcloak session for a given TLS preset.
+ * Evict the least-recently-used session that has no in-flight requests.
+ * Called when the session cache exceeds MAX_SESSIONS.
+ */
+function evictLruSession(): void {
+  let oldestKey: string | undefined;
+  let oldestAccessed = Infinity;
+
+  for (const [key, meta] of sessionCache) {
+    if (meta.inFlightRequests === 0 && meta.lastAccessed < oldestAccessed) {
+      oldestAccessed = meta.lastAccessed;
+      oldestKey = key;
+    }
+  }
+
+  if (oldestKey) {
+    const evicted = sessionCache.get(oldestKey)!;
+    sessionCache.delete(oldestKey);
+    evicted.promise
+      .then((session) => session.close())
+      .catch((error) => {
+        logger.warn(
+          { key: redactCacheKey(oldestKey), error: String(error) },
+          'Error closing evicted session'
+        );
+      });
+    logger.debug({ key: redactCacheKey(oldestKey) }, 'Evicted LRU session');
+  }
+}
+
+/**
+ * Get or create httpcloak session for a given TLS preset and optional proxy.
  * Sessions are cached and reused across requests with proper concurrency control.
  * Sessions are automatically recycled after 1 hour or 10,000 requests to prevent memory leaks.
+ * Cache is capped at MAX_SESSIONS entries with LRU eviction.
  */
-export async function getSession(preset?: string): Promise<httpcloak.Session> {
+export async function getSession(preset?: string, proxy?: string): Promise<httpcloak.Session> {
   const presetValue = preset ?? DEFAULT_PRESET;
-  const cacheKey = String(presetValue);
+  const cacheKey = `${presetValue}|${proxy || 'direct'}`;
 
   // Check if session needs recycling
   const metadata = sessionCache.get(cacheKey);
@@ -167,7 +251,7 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
       if (metadata.inFlightRequests > 0) {
         logger.debug(
           {
-            preset: cacheKey,
+            preset: redactCacheKey(cacheKey),
             age: Math.floor(age / 1000),
             requests: metadata.requestCount,
             inFlight: metadata.inFlightRequests,
@@ -178,12 +262,13 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
         // Recycling will happen on the next getSession() call after in-flight requests complete
         metadata.requestCount++;
         metadata.inFlightRequests++;
+        metadata.lastAccessed = Date.now();
         return metadata.promise;
       }
 
       logger.info(
         {
-          preset: cacheKey,
+          preset: redactCacheKey(cacheKey),
           age: Math.floor(age / 1000),
           requests: metadata.requestCount,
         },
@@ -194,7 +279,10 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
       metadata.promise
         .then((session) => session.close())
         .catch((error) => {
-          logger.warn({ preset: cacheKey, error: String(error) }, 'Error closing old session');
+          logger.warn(
+            { preset: redactCacheKey(cacheKey), error: String(error) },
+            'Error closing old session'
+          );
         });
 
       sessionCache.delete(cacheKey);
@@ -202,6 +290,7 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
       // Session is healthy, increment counters atomically and return
       metadata.requestCount++;
       metadata.inFlightRequests++;
+      metadata.lastAccessed = Date.now();
       return metadata.promise;
     }
   }
@@ -217,6 +306,7 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
     if (newMetadata) {
       newMetadata.requestCount++;
       newMetadata.inFlightRequests++;
+      newMetadata.lastAccessed = Date.now();
       return newMetadata.promise;
     }
   }
@@ -229,15 +319,32 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
   sessionLocks.set(cacheKey, lock);
 
   try {
-    logger.debug({ preset: cacheKey }, 'Creating httpcloak session');
+    // LRU eviction: ensure we don't exceed MAX_SESSIONS
+    while (sessionCache.size >= MAX_SESSIONS) {
+      evictLruSession();
+      // If we couldn't evict (all in-flight), allow exceeding temporarily
+      if (sessionCache.size >= MAX_SESSIONS) break;
+    }
+
+    const logProxy = proxy ? redactProxyUrl(proxy) : undefined;
+    logger.debug(
+      { preset: redactCacheKey(cacheKey), proxy: logProxy },
+      'Creating httpcloak session'
+    );
 
     // Create session synchronously so constructor failures are caught
     // before anything is cached, allowing callers to retry cleanly.
-    const session = new httpcloak.Session({ preset: presetValue, timeout: SESSION_TIMEOUT_SEC });
+    const session = new httpcloak.Session({
+      preset: presetValue,
+      timeout: SESSION_TIMEOUT_SEC,
+      ...(proxy ? { proxy } : {}),
+    });
 
+    const now = Date.now();
     sessionCache.set(cacheKey, {
       promise: Promise.resolve(session),
-      created: Date.now(),
+      created: now,
+      lastAccessed: now,
       requestCount: 1,
       inFlightRequests: 1,
     });
@@ -246,7 +353,10 @@ export async function getSession(preset?: string): Promise<httpcloak.Session> {
   } catch (error) {
     // Session constructor failed — no promise was cached, so subsequent
     // callers will retry creation instead of awaiting a rejected promise.
-    logger.error({ preset: cacheKey, error: String(error) }, 'Failed to create httpcloak session');
+    logger.error(
+      { preset: redactCacheKey(cacheKey), error: String(error) },
+      'Failed to create httpcloak session'
+    );
     throw error;
   } finally {
     // Release lock
@@ -291,18 +401,27 @@ export interface HttpResponse {
   error?: string;
 }
 
+/** Check whether a cookies map has at least one entry. */
+function hasEntries(obj: Record<string, string> | undefined): obj is Record<string, string> {
+  return obj !== undefined && Object.keys(obj).length > 0;
+}
+
 /** Dispatch a request using the appropriate HTTP method. */
 function dispatchRequest(
   session: httpcloak.Session,
   method: 'GET' | 'POST',
   url: string,
   headers: Record<string, string>,
-  body: Record<string, string> | undefined
+  body: Record<string, string> | undefined,
+  cookies?: Record<string, string>
 ): Promise<httpcloak.Response> {
-  if (method === 'POST') {
-    return session.post(url, { headers, body });
-  }
-  return session.get(url, { headers });
+  const opts = {
+    headers,
+    ...(hasEntries(cookies) ? { cookies } : {}),
+    ...(method === 'POST' ? { body } : {}),
+  } as httpcloak.RequestOptions;
+
+  return method === 'POST' ? session.post(url, opts) : session.get(url, opts);
 }
 
 /** Create a timeout promise that rejects after the specified timeout. */
@@ -330,18 +449,25 @@ async function httpRequestInternal(
   headers: Record<string, string>,
   body: Record<string, string> | undefined,
   preset: string | undefined,
-  timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
+  proxy?: string,
+  cookies?: Record<string, string>
 ): Promise<HttpResponse> {
   let sessionMetadata: SessionMetadata | undefined;
-  const cacheKey = String(preset ?? DEFAULT_PRESET);
+  const cacheKey = `${preset ?? DEFAULT_PRESET}|${proxy || 'direct'}`;
 
   try {
-    // SSRF protection: validate URL and capture resolved IPs
+    // SSRF protection: validate proxy URL
+    if (proxy) {
+      await validateProxyUrl(proxy);
+    }
+
+    // SSRF protection: validate target URL and capture resolved IPs
     const preConnectionIPs = await validateSSRFWithTimeout(url);
 
     // Get session and atomically increment in-flight counter
     // (getSession() increments both requestCount and inFlightRequests)
-    const session = await getSession(preset);
+    const session = await getSession(preset, proxy);
     sessionMetadata = sessionCache.get(cacheKey);
 
     // Merge caller headers with cache-busting defaults.
@@ -352,13 +478,17 @@ async function httpRequestInternal(
       ...headers,
     };
 
-    logger.debug({ url, method, headers: mergedHeaders }, 'Making httpcloak request');
+    const logProxy = proxy ? redactProxyUrl(proxy) : undefined;
+    logger.debug(
+      { url, method, headers: mergedHeaders, proxy: logProxy },
+      'Making httpcloak request'
+    );
 
     let timeout = createRequestTimeout(url, timeoutMs);
 
     try {
       let response = await Promise.race([
-        dispatchRequest(session, method, url, mergedHeaders, body),
+        dispatchRequest(session, method, url, mergedHeaders, body, cookies),
         timeout.promise,
       ]);
 
@@ -372,11 +502,12 @@ async function httpRequestInternal(
         const freshSession = new httpcloak.Session({
           preset: preset ?? DEFAULT_PRESET,
           timeout: SESSION_TIMEOUT_SEC,
+          ...(proxy ? { proxy } : {}),
         });
         timeout = createRequestTimeout(url, timeoutMs);
         try {
           response = await Promise.race([
-            dispatchRequest(freshSession, method, url, mergedHeaders, body),
+            dispatchRequest(freshSession, method, url, mergedHeaders, body, cookies),
             timeout.promise,
           ]);
         } finally {
@@ -412,7 +543,7 @@ async function httpRequestInternal(
       }
 
       // Parse cookies from response
-      const cookies = (response.cookies || []).map((c: HttpcloakCookie) => ({
+      const responseCookies = (response.cookies || []).map((c: HttpcloakCookie) => ({
         name: c.name,
         value: c.value,
         domain: c.domain || new URL(url).hostname,
@@ -446,7 +577,7 @@ async function httpRequestInternal(
         {
           url,
           statusCode: response.statusCode,
-          cookieCount: cookies.length,
+          cookieCount: responseCookies.length,
           bodyLength: html?.length || 0,
         },
         'httpcloak request complete'
@@ -457,7 +588,7 @@ async function httpRequestInternal(
         statusCode: response.statusCode,
         html,
         headers: response.headers || {},
-        cookies,
+        cookies: responseCookies,
       };
     } catch (error) {
       logger.warn({ url, error: String(error) }, 'httpcloak request failed');
@@ -496,9 +627,11 @@ export async function httpRequest(
   url: string,
   headers: Record<string, string> = {},
   preset?: string,
-  timeoutMs?: number
+  timeoutMs?: number,
+  proxy?: string,
+  cookies?: Record<string, string>
 ): Promise<HttpResponse> {
-  return httpRequestInternal('GET', url, headers, undefined, preset, timeoutMs);
+  return httpRequestInternal('GET', url, headers, undefined, preset, timeoutMs, proxy, cookies);
 }
 
 /**
@@ -510,17 +643,21 @@ export async function httpPost(
   formData: Record<string, string>,
   headers?: Record<string, string>,
   preset?: string,
-  timeoutMs?: number
+  timeoutMs?: number,
+  proxy?: string,
+  cookies?: Record<string, string>
 ): Promise<HttpResponse> {
   return httpRequestInternal(
     'POST',
     url,
     {
-      ...(headers || {}),
+      ...headers,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     formData,
     preset,
-    timeoutMs
+    timeoutMs,
+    proxy,
+    cookies
   );
 }

@@ -31,6 +31,14 @@ import type { FetchResult, ValidationError } from './types.js';
 import { parseHTML } from 'linkedom';
 import { GOOD_CONTENT_LENGTH } from '../extract/types.js';
 
+/** Shared request context threaded through internal extraction helpers. */
+interface RequestContext {
+  preset?: string;
+  timeout?: number;
+  proxy?: string;
+  cookies?: Record<string, string>;
+}
+
 // Minimum content length (chars) for successful extraction
 const MIN_CONTENT_LENGTH = 100;
 
@@ -82,6 +90,16 @@ export function resolvePreset(userAgent: string | null): string | undefined {
     return httpcloak.Preset.IOS_SAFARI_18;
   }
   return undefined;
+}
+
+/**
+ * Resolve proxy URL from explicit option or environment variables.
+ * Priority: explicit > AGENT_FETCH_PROXY > HTTPS_PROXY > HTTP_PROXY
+ */
+export function resolveProxy(explicit?: string): string | undefined {
+  return (
+    explicit || process.env.AGENT_FETCH_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+  );
 }
 
 /** Build a failure result with common fields pre-filled. */
@@ -163,8 +181,7 @@ const WP_LIST_BATCH_SIZE = 50;
 async function fetchPmcListItems(
   origin: string,
   itemIds: number[],
-  preset?: string,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<string | null> {
   // Limit items to prevent abuse
   const limitedIds = itemIds.slice(0, MAX_LIST_ITEMS);
@@ -184,7 +201,14 @@ async function fetchPmcListItems(
 
     logger.debug({ apiUrl, count: batch.length }, 'Fetching WP list items batch');
 
-    const response = await httpRequest(apiUrl, { Accept: 'application/json' }, preset, timeout);
+    const response = await httpRequest(
+      apiUrl,
+      { Accept: 'application/json' },
+      ctx.preset,
+      ctx.timeout,
+      ctx.proxy,
+      ctx.cookies
+    );
     if (!response.success || !response.html) continue;
 
     let items: unknown[];
@@ -278,14 +302,20 @@ function hasWpApiTruncationMarker(html: string): boolean {
 async function tryWpRestApiExtraction(
   apiUrl: string,
   originalResult: ExtractionResult | null,
-  preset?: string,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<ExtractionResult | null> {
   try {
     const embedUrl = apiUrl + (apiUrl.includes('?') ? '&_embed' : '?_embed');
     logger.info({ apiUrl: embedUrl }, 'Trying WordPress REST API extraction');
 
-    const response = await httpRequest(embedUrl, { Accept: 'application/json' }, preset, timeout);
+    const response = await httpRequest(
+      embedUrl,
+      { Accept: 'application/json' },
+      ctx.preset,
+      ctx.timeout,
+      ctx.proxy,
+      ctx.cookies
+    );
 
     if (!response.success || !response.html) return null;
 
@@ -305,7 +335,7 @@ async function tryWpRestApiExtraction(
         'Detected PMC list, fetching list items'
       );
 
-      const listItemsHtml = await fetchPmcListItems(origin, pmcListOrder, preset, timeout);
+      const listItemsHtml = await fetchPmcListItems(origin, pmcListOrder, ctx);
       if (listItemsHtml) {
         // Combine intro content with list items, avoiding leading whitespace
         contentHtml = contentHtml ? contentHtml + '\n\n' + listItemsHtml : listItemsHtml;
@@ -425,13 +455,12 @@ async function tryWpRestApiFallback(
   startTime: number,
   response: { statusCode: number; html?: string },
   extracted: ExtractionResult | null,
-  preset: string | undefined,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<FetchResult | null> {
   const wpApiUrl = resolveWpApiUrl(html, url);
   if (!wpApiUrl) return null;
 
-  const result = await tryWpRestApiExtraction(wpApiUrl, extracted, preset, timeout);
+  const result = await tryWpRestApiExtraction(wpApiUrl, extracted, ctx);
   if (!result) return null;
 
   logger.info({ url, apiUrl: wpApiUrl }, 'Recovered content from WP REST API');
@@ -494,8 +523,7 @@ async function tryNextDataRoute(
   startTime: number,
   response: { statusCode: number; html?: string },
   domExtracted: ExtractionResult | null,
-  preset: string | undefined,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<FetchResult | null> {
   const { document } = parseHTML(html);
   const buildId = extractNextBuildId(document);
@@ -509,8 +537,10 @@ async function tryNextDataRoute(
     const dataResponse = await httpRequest(
       dataRouteUrl,
       { Accept: 'application/json' },
-      preset,
-      timeout
+      ctx.preset,
+      ctx.timeout,
+      ctx.proxy,
+      ctx.cookies
     );
     if (!dataResponse.success || !dataResponse.html) return null;
 
@@ -555,13 +585,19 @@ async function tryNextDataRoute(
  */
 async function tryPrismContentApiExtraction(
   apiUrl: string,
-  preset?: string,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<ExtractionResult | null> {
   try {
     logger.info({ apiUrl }, 'Trying Prism content API extraction');
 
-    const response = await httpRequest(apiUrl, { Accept: 'application/json' }, preset, timeout);
+    const response = await httpRequest(
+      apiUrl,
+      { Accept: 'application/json' },
+      ctx.preset,
+      ctx.timeout,
+      ctx.proxy,
+      ctx.cookies
+    );
     if (!response.success || !response.html) return null;
 
     return parseArcAnsContent(JSON.parse(response.html));
@@ -581,8 +617,7 @@ async function tryPrismContentApiFallback(
   url: string,
   startTime: number,
   response: { statusCode: number; html?: string },
-  preset: string | undefined,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<FetchResult | null> {
   const config = detectPrismContentApi(html);
   if (!config) return null;
@@ -590,7 +625,7 @@ async function tryPrismContentApiFallback(
   const apiUrl = buildPrismContentApiUrl(config, url);
   logger.debug({ url, apiUrl }, 'Detected Prism content API, trying extraction');
 
-  const result = await tryPrismContentApiExtraction(apiUrl, preset, timeout);
+  const result = await tryPrismContentApiExtraction(apiUrl, ctx);
   if (!result) return null;
 
   logger.info({ url, apiUrl }, 'Recovered content from Prism content API');
@@ -612,8 +647,7 @@ async function tryWpAjaxContentFallback(
   startTime: number,
   response: { statusCode: number; html?: string },
   domExtracted: ExtractionResult | null,
-  preset: string | undefined,
-  timeout?: number
+  ctx: RequestContext
 ): Promise<FetchResult | null> {
   const config = detectWpAjaxContent(html, url);
   if (!config) return null;
@@ -628,8 +662,10 @@ async function tryWpAjaxContentFallback(
       config.ajaxUrl,
       { action: config.action, 'data[id]': config.articleId },
       undefined,
-      preset,
-      timeout
+      ctx.preset,
+      ctx.timeout,
+      ctx.proxy,
+      ctx.cookies
     );
 
     if (!ajaxResponse.success || !ajaxResponse.html) return null;
@@ -707,6 +743,14 @@ export interface HttpFetchOptions extends SelectorOptions {
    * When false (default), rawHtml is only included if RECORD_HTML env var is set.
    */
   includeRawHtml?: boolean;
+  /**
+   * HTTP/SOCKS proxy URL. Falls back to AGENT_FETCH_PROXY, HTTPS_PROXY, HTTP_PROXY env vars.
+   */
+  proxy?: string;
+  /**
+   * Cookies to send with every request (name -> value).
+   */
+  cookies?: Record<string, string>;
 }
 
 export async function httpFetch(url: string, options: HttpFetchOptions = {}): Promise<FetchResult> {
@@ -721,11 +765,16 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       ? { targetSelector: options.targetSelector, removeSelector: options.removeSelector }
       : undefined;
 
+  // Resolve proxy from option or env vars
+  const proxy = resolveProxy(options.proxy);
+  const cookies = options.cookies;
+  const ctx: RequestContext = { preset, timeout, proxy, cookies };
+
   try {
     // PDF detection: if URL looks like a PDF, fetch as binary and extract
     if (isPdfUrl(url)) {
       logger.info({ url }, 'Detected PDF URL, fetching as binary');
-      const pdfResult = await fetchRemotePdfBuffer(url, preset, timeout);
+      const pdfResult = await fetchRemotePdfBuffer(url, preset, timeout, proxy, cookies);
       if (pdfResult) {
         return extractPdfFromBuffer(pdfResult.buffer, url, pdfResult.statusCode);
       }
@@ -747,7 +796,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         logger.info({ url, wpApiUrl }, 'Trying WP REST API (config-driven, skipping HTML)');
 
         try {
-          const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, preset, timeout);
+          const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, ctx);
           if (wpResult) {
             logger.info({ url, wpApiUrl }, 'Extracted content from WP REST API (fast path)');
             return successResult(url, startTime, wpResult, {
@@ -773,7 +822,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     let attempt = 0;
 
     while (true) {
-      response = await httpRequest(url, buildSiteHeaders(url), preset, timeout);
+      response = await httpRequest(url, buildSiteHeaders(url), preset, timeout, proxy, cookies);
 
       if (!isRetryableError(response) || attempt >= MAX_RETRIES) break;
 
@@ -833,8 +882,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           startTime,
           response,
           null,
-          preset,
-          timeout
+          ctx
         );
         if (wpFallback) {
           if (keepRawHtml) wpFallback.rawHtml = response.html;
@@ -846,8 +894,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           url,
           startTime,
           response,
-          preset,
-          timeout
+          ctx
         );
         if (prismFallback) {
           if (keepRawHtml) prismFallback.rawHtml = response.html;
@@ -860,8 +907,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           startTime,
           response,
           null,
-          preset,
-          timeout
+          ctx
         );
         if (wpAjaxFallback) {
           if (keepRawHtml) wpAjaxFallback.rawHtml = response.html;
@@ -885,7 +931,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     // Try WP REST API first if available - structured data is more reliable than DOM extraction
     const wpApiUrl = resolveWpApiUrl(response.html, url);
     if (wpApiUrl) {
-      const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, preset, timeout);
+      const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, ctx);
       if (wpResult) {
         // Compare against DOM extraction to detect silently truncated API responses.
         // Some WordPress sites serve only a teaser via their REST API while the
@@ -925,8 +971,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       url,
       startTime,
       response,
-      preset,
-      timeout
+      ctx
     );
     if (prismResult) {
       if (keepRawHtml) prismResult.rawHtml = response.html;
@@ -959,8 +1004,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         startTime,
         response,
         extracted,
-        preset,
-        timeout
+        ctx
       );
       if (wpAjaxResult) {
         if (keepRawHtml) wpAjaxResult.rawHtml = response.html;
@@ -989,8 +1033,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         startTime,
         response,
         extracted,
-        preset,
-        timeout
+        ctx
       );
       if (dataRouteResult) {
         if (keepRawHtml) dataRouteResult.rawHtml = response.html;

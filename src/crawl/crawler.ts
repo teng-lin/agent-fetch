@@ -21,10 +21,12 @@ const DEFAULT_CONCURRENCY = 5;
 async function simpleFetch(
   url: string,
   preset?: string,
-  timeout?: number
+  timeout?: number,
+  proxy?: string,
+  cookies?: Record<string, string>
 ): Promise<{ ok: boolean; text: string } | null> {
   try {
-    const response = await httpRequest(url, {}, preset, timeout);
+    const response = await httpRequest(url, {}, preset, timeout, proxy, cookies);
     return { ok: response.success, text: response.html ?? '' };
   } catch {
     return null;
@@ -66,7 +68,8 @@ export async function* crawl(
   }
 
   const origin = new URL(startUrl).origin;
-  const fetchFn = (url: string) => simpleFetch(url, options.preset, options.timeout);
+  const fetchFn = (url: string) =>
+    simpleFetch(url, options.preset, options.timeout, options.proxy, options.cookies);
 
   // Step 1: Fetch robots.txt
   const robots = await fetchRobotsTxt(origin, fetchFn);
@@ -197,6 +200,8 @@ async function* processFrontier(
           targetSelector: options.targetSelector,
           removeSelector: options.removeSelector,
           includeRawHtml: discoverLinks,
+          proxy: options.proxy,
+          cookies: options.cookies,
         });
 
         if (discoverLinks && result.success && result.rawHtml) {

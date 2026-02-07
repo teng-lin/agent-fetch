@@ -149,6 +149,8 @@ describe('httpFetch', () => {
         Referer: customReferer,
       }),
       undefined,
+      undefined,
+      undefined,
       undefined
     );
   });
@@ -443,6 +445,84 @@ describe('httpFetch', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('SSRF protection');
     expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes proxy and cookies to httpRequest', async () => {
+    const url = 'https://example.com/article';
+
+    vi.mocked(httpRequest).mockResolvedValue({
+      success: true,
+      statusCode: 200,
+      html: '<html><body>Content</body></html>',
+      headers: { 'content-type': 'text/html' },
+      cookies: [],
+    });
+
+    vi.mocked(quickValidate).mockReturnValue({ valid: true });
+    vi.mocked(extractFromHtml).mockReturnValue({
+      title: 'Test',
+      byline: null,
+      content: null,
+      textContent: 'x'.repeat(200),
+      excerpt: null,
+      siteName: null,
+      publishedTime: null,
+      lang: null,
+      method: 'readability',
+    });
+    vi.mocked(getSiteUserAgent).mockReturnValue(null);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    await httpFetch(url, {
+      proxy: 'http://proxy.example.com:8080',
+      cookies: { session: 'abc123' },
+    });
+
+    expect(httpRequest).toHaveBeenCalledWith(
+      url,
+      expect.any(Object),
+      undefined,
+      undefined,
+      'http://proxy.example.com:8080',
+      { session: 'abc123' }
+    );
+  });
+
+  it('passes proxy and cookies to PDF fetch', async () => {
+    const url = 'https://example.com/report.pdf';
+    vi.mocked(isPdfUrl).mockReturnValueOnce(true);
+    vi.mocked(fetchRemotePdfBuffer).mockResolvedValue({
+      buffer: Buffer.from('fake-pdf'),
+      statusCode: 200,
+    });
+    vi.mocked(extractPdfFromBuffer).mockResolvedValue({
+      success: true,
+      url,
+      latencyMs: 50,
+      content: 'PDF text',
+      textContent: 'PDF text',
+      markdown: 'PDF text',
+      extractedWordCount: 2,
+      statusCode: 200,
+      rawHtml: null,
+      extractionMethod: 'pdf-parse',
+    });
+
+    vi.mocked(getSiteUserAgent).mockReturnValue(null);
+    vi.mocked(getSiteReferer).mockReturnValue(null);
+
+    await httpFetch(url, {
+      proxy: 'http://proxy.example.com:8080',
+      cookies: { session: 'abc123' },
+    });
+
+    expect(fetchRemotePdfBuffer).toHaveBeenCalledWith(
+      url,
+      undefined,
+      undefined,
+      'http://proxy.example.com:8080',
+      { session: 'abc123' }
+    );
   });
 
   it('passes mobile preset to httpRequest for Android Chrome UA', async () => {
@@ -1194,7 +1274,13 @@ describe('Next.js data route fallback', () => {
 
       expect(result.success).toBe(true);
       expect(result.extractionMethod).toBe('pdf-parse');
-      expect(fetchRemotePdfBuffer).toHaveBeenCalledWith(url, undefined, undefined);
+      expect(fetchRemotePdfBuffer).toHaveBeenCalledWith(
+        url,
+        undefined,
+        undefined,
+        undefined,
+        undefined
+      );
       expect(extractPdfFromBuffer).toHaveBeenCalledWith(Buffer.from('fake-pdf'), url, 200);
       expect(httpRequest).not.toHaveBeenCalled();
     });
