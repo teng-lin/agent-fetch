@@ -28,6 +28,14 @@ export interface ValidationResult {
   };
 }
 
+/** Shared request context threaded through internal extraction helpers. */
+export interface RequestContext {
+  preset?: string;
+  timeout?: number;
+  proxy?: string;
+  cookies?: Record<string, string>;
+}
+
 export interface FetchResult {
   success: boolean;
   url: string;

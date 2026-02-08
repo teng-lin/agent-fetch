@@ -148,19 +148,6 @@ interface ProcessOptions {
 }
 
 /**
- * Collect up to `count` entries from the frontier.
- */
-function collectBatch(frontier: UrlFrontier, count: number): { url: string; depth: number }[] {
-  const batch: { url: string; depth: number }[] = [];
-  while (batch.length < count && frontier.hasMore()) {
-    const entry = frontier.next();
-    if (!entry) break;
-    batch.push(entry);
-  }
-  return batch;
-}
-
-/**
  * Check if a URL is allowed by robots.txt Disallow rules.
  * Returns false (blocked) if the URL cannot be parsed.
  */
@@ -173,8 +160,10 @@ function isUrlAllowed(url: string, disallowPaths: string[]): boolean {
 }
 
 /**
- * Process frontier entries with concurrency control.
- * When discoverLinks is true, extracts links from fetched pages for BFS crawling.
+ * Process frontier entries with sliding-window concurrency control.
+ * Uses a Map-based inflight tracker so that each completed request
+ * immediately frees a slot for the next URL, rather than waiting
+ * for the entire batch to finish.
  */
 async function* processFrontier(
   frontier: UrlFrontier,
@@ -182,19 +171,25 @@ async function* processFrontier(
 ): AsyncGenerator<CrawlResult> {
   const { concurrency, delay, disallowPaths, options, discoverLinks, onResult, onBlocked } = opts;
 
-  while (frontier.hasMore()) {
-    const batch = collectBatch(frontier, concurrency);
-    if (batch.length === 0) break;
+  let nextId = 0;
+  const inflight = new Map<number, Promise<{ id: number; result: CrawlResult | null }>>();
 
-    const results = await Promise.all(
-      batch.map(async (entry) => {
+  function enqueue(): void {
+    while (inflight.size < concurrency && frontier.hasMore()) {
+      const entry = frontier.next();
+      if (!entry) break;
+      const id = nextId++;
+
+      const promise = (async () => {
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+
         if (!isUrlAllowed(entry.url, disallowPaths)) {
           logger.debug({ url: entry.url }, 'Blocked by robots.txt');
           onBlocked();
-          return null;
+          return { id, result: null };
         }
 
-        const result = await httpFetch(entry.url, {
+        const fetchResult = await httpFetch(entry.url, {
           preset: options.preset,
           timeout: options.timeout,
           targetSelector: options.targetSelector,
@@ -204,24 +199,32 @@ async function* processFrontier(
           cookies: options.cookies,
         });
 
-        if (discoverLinks && result.success && result.rawHtml) {
-          frontier.addAll(extractLinks(result.rawHtml, entry.url), entry.depth + 1);
-          result.rawHtml = null;
+        if (discoverLinks && fetchResult.success && fetchResult.rawHtml) {
+          frontier.addAll(extractLinks(fetchResult.rawHtml, entry.url), entry.depth + 1);
+          fetchResult.rawHtml = null;
         }
 
-        return { ...result, depth: entry.depth } as CrawlResult;
-      })
-    );
+        return { id, result: { ...fetchResult, depth: entry.depth } as CrawlResult };
+      })();
 
-    for (const result of results) {
-      if (result) {
-        onResult(result.success);
-        yield result;
-      }
+      inflight.set(id, promise);
+    }
+  }
+
+  // Fill initial window
+  enqueue();
+
+  while (inflight.size > 0) {
+    // Race all inflight promises — settled includes the id for Map deletion
+    const settled = await Promise.race(inflight.values());
+    inflight.delete(settled.id);
+
+    if (settled.result) {
+      onResult(settled.result.success);
+      yield settled.result;
     }
 
-    if (delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
+    // Refill window
+    enqueue();
   }
 }
