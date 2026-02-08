@@ -37,15 +37,16 @@ interface FetchTestCase {
 function getFetchTestCases(configs: SiteTestConfig[], testSet: string): FetchTestCase[] {
   const cases: FetchTestCase[] = [];
   for (const config of configs) {
-    const minWords = config.fetch?.minWords ?? config.stable.minWords;
     const { site, priority, tags, expectedToFail } = config;
-    const shared = { minWords, priority, tags, expectedToFail };
+    const shared = { priority, tags, expectedToFail };
 
     if (testSet === 'stable' || testSet === 'all') {
-      cases.push({ site, url: config.stable.url, ...shared });
+      const minWords = config.fetch?.minWords ?? config.stable.minWords;
+      cases.push({ site, url: config.stable.url, minWords, ...shared });
     }
     if ((testSet === 'latest' || testSet === 'all') && config.latest) {
-      cases.push({ site: `${site} (latest)`, url: config.latest.url, ...shared });
+      const minWords = config.fetch?.minWords ?? config.latest.minWords ?? config.stable.minWords;
+      cases.push({ site: `${site} (latest)`, url: config.latest.url, minWords, ...shared });
     }
   }
   return cases;
