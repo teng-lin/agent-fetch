@@ -194,7 +194,7 @@ function tryNextDataFallback(
       extractionMethod: 'next-data',
     });
   } catch (e) {
-    log.debug({ error: String(e) }, 'Next.js data fallback failed');
+    log.debug({ err: e }, 'Next.js data fallback failed');
     return null;
   }
 }
@@ -256,7 +256,7 @@ async function tryPrismContentApiExtraction(
 
     return parseArcAnsContent(JSON.parse(response.html));
   } catch (e) {
-    log.debug({ apiUrl, error: String(e) }, 'Prism content API extraction failed');
+    log.debug({ apiUrl, err: e }, 'Prism content API extraction failed');
     return null;
   }
 }
@@ -352,7 +352,7 @@ async function tryWpAjaxContentFallback(
       extractionMethod: 'wp-ajax-content',
     });
   } catch (e) {
-    log.debug({ error: String(e) }, 'WP AJAX content fallback failed');
+    log.debug({ err: e }, 'WP AJAX content fallback failed');
     return null;
   }
 }
@@ -465,7 +465,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
             });
           }
         } catch (e) {
-          log.debug({ error: String(e) }, 'WP REST API fast path failed');
+          log.debug({ err: e }, 'WP REST API fast path failed');
         }
 
         log.debug('WP REST API fast path returned no content, falling back to HTML fetch');
@@ -711,7 +711,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       selectors: selectorOpts,
     });
   } catch (error) {
-    log.error({ error: String(error) }, 'HTTP fetch failed');
+    log.error({ err: error }, 'HTTP fetch failed');
 
     return failResult(url, startTime, {
       error: 'network_error',

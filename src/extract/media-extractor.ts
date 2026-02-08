@@ -275,7 +275,7 @@ export function extractMedia(contentHtml: string, baseUrl: string): MediaElement
     if (!root) return [];
     return extractMediaFromElement(root, baseUrl);
   } catch (e) {
-    logger.debug({ baseUrl, error: String(e) }, 'Media extraction failed');
+    logger.debug({ baseUrl, err: e }, 'Media extraction failed');
     return [];
   }
 }

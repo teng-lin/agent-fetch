@@ -257,15 +257,15 @@ export function extractFromHtml(
             textContent: contentDoc.body.textContent?.trim() ?? '',
           };
         } catch (e) {
-          logger.debug({ url, method: result.method, error: String(e) }, 'Content cleanup failed');
+          logger.debug({ url, method: result.method, err: e }, 'Content cleanup failed');
         }
       }
 
       // Extract media from same parsed document (avoids second parse)
       try {
         media = extractMediaFromElement(contentDoc.body, url);
-      } catch {
-        // Non-critical: media extraction failure should not block content delivery
+      } catch (e) {
+        logger.debug({ url, method: result.method, err: e }, 'Media extraction failed');
       }
     }
 
