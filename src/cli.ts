@@ -547,8 +547,15 @@ export async function main(): Promise<void> {
 const isDirectRun =
   process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
 if (isDirectRun) {
-  main().catch((err) => {
-    console.error(`Fatal: ${err}`);
-    process.exit(1);
-  });
+  main()
+    .then(() => {
+      // httpcloak's Go shared library (loaded via koffi FFI) holds internal libuv
+      // references that prevent the Node.js event loop from exiting naturally.
+      // Force exit after cleanup.
+      process.exit(0);
+    })
+    .catch((err) => {
+      console.error(`Fatal: ${err}`);
+      process.exit(1);
+    });
 }
