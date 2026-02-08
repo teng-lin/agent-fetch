@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  let db: any = null;
+  let db: Awaited<ReturnType<typeof loadDatabase>> = null;
   let runCount = 0;
 
   try {

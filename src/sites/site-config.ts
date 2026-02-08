@@ -22,7 +22,9 @@ export interface MobileApiConfig {
   /** App identifier header */
   appIdentifier: string;
   /** Authorization token for API requests */
-  authToken: string;
+  token: string;
+  /** Header name for the token (e.g., "x-access-token", "authorization") */
+  tokenType: string;
 }
 
 // --- Site config interface ---
@@ -53,7 +55,8 @@ export interface SiteConfig {
 export const MobileApiConfigSchema = z.object({
   apiUrl: z.string().url(),
   appIdentifier: z.string(),
-  authToken: z.string(),
+  token: z.string(),
+  tokenType: z.string(),
 });
 
 export const SiteConfigSchema = z.object({
@@ -76,11 +79,17 @@ function parseMobileApiConfig(raw: unknown): MobileApiConfig | null {
   if (
     typeof cfg.apiUrl !== 'string' ||
     typeof cfg.appIdentifier !== 'string' ||
-    typeof cfg.authToken !== 'string'
+    typeof cfg.token !== 'string' ||
+    typeof cfg.tokenType !== 'string'
   ) {
     return null;
   }
-  return { apiUrl: cfg.apiUrl, appIdentifier: cfg.appIdentifier, authToken: cfg.authToken };
+  return {
+    apiUrl: cfg.apiUrl,
+    appIdentifier: cfg.appIdentifier,
+    token: cfg.token,
+    tokenType: cfg.tokenType,
+  };
 }
 
 /**

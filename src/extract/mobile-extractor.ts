@@ -66,7 +66,7 @@ export async function extractFromMobileApi(
       headers: {
         'app-identifier': config.appIdentifier,
         'device-type': 'phone',
-        'x-access-token': config.authToken,
+        [config.tokenType]: config.token,
         Accept: 'application/json',
       },
     });
