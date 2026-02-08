@@ -42,6 +42,11 @@ vi.mock('../sites/site-config.js', () => ({
   getSiteNextDataPath: vi.fn().mockReturnValue(null),
   getSiteConfig: vi.fn().mockReturnValue(null),
   getSiteWpJsonApiPath: vi.fn().mockReturnValue(null),
+  isMobileApiSite: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('../extract/mobile-extractor.js', () => ({
+  extractFromMobileApi: vi.fn().mockResolvedValue({ success: false }),
 }));
 
 import { httpFetch } from '../fetch/http-fetch.js';
@@ -57,6 +62,7 @@ import {
   getSiteNextDataPath,
   getSiteConfig,
   getSiteWpJsonApiPath,
+  isMobileApiSite,
 } from '../sites/site-config.js';
 import { GOOD_CONTENT_LENGTH } from '../extract/types.js';
 import {
@@ -82,6 +88,7 @@ describe('httpFetch fallback chains', () => {
     vi.mocked(getSiteNextDataPath).mockReturnValue(null);
     vi.mocked(getSiteConfig).mockReturnValue(null);
     vi.mocked(getSiteWpJsonApiPath).mockReturnValue(null);
+    vi.mocked(isMobileApiSite).mockReturnValue(false);
     vi.mocked(logger.child).mockReturnValue({
       info: vi.fn(),
       debug: vi.fn(),

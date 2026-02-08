@@ -390,6 +390,10 @@ export async function closeAllSessions(): Promise<void> {
       logger.warn({ error: String(result.reason) }, 'Error closing httpcloak session');
     }
   }
+
+  // Close the mobile API session if active
+  const { closeMobileApiClient } = await import('../extract/mobile-extractor.js');
+  await closeMobileApiClient();
 }
 
 export interface HttpResponse {

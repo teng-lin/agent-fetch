@@ -23,6 +23,11 @@ vi.mock('../sites/site-config.js', () => ({
   siteUseWpRestApi: vi.fn().mockReturnValue(false),
   getSiteWpJsonApiPath: vi.fn().mockReturnValue(null),
   siteUseNextData: vi.fn().mockReturnValue(false),
+  isMobileApiSite: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('../extract/mobile-extractor.js', () => ({
+  extractFromMobileApi: vi.fn().mockResolvedValue({ success: false }),
 }));
 
 vi.mock('../extract/pdf-extractor.js', () => ({

@@ -11,6 +11,7 @@ import {
   getSiteReferer,
   siteUseWpRestApi,
   siteUseNextData,
+  isMobileApiSite,
 } from '../sites/site-config.js';
 import {
   detectPrismContentApi,
@@ -33,6 +34,7 @@ import {
   resolveWpApiUrl,
 } from './wp-rest-api.js';
 import { fetchNextDataRoute } from './next-data-route.js';
+import { extractFromMobileApi } from '../extract/mobile-extractor.js';
 
 // Minimum content length (chars) for successful extraction
 const MIN_EXTRACTION_LENGTH = 100;
@@ -358,6 +360,63 @@ async function tryWpAjaxContentFallback(
 }
 
 /**
+ * Extract page title from HTML <title> tag or og:title meta.
+ */
+function extractPageTitle(html: string): string | undefined {
+  const ogMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  if (ogMatch) return ogMatch[1];
+  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return titleMatch?.[1]?.trim() || undefined;
+}
+
+/**
+ * Extract article ID from <meta name="article.id"> in HTML.
+ */
+function extractArticleId(html: string): string | null {
+  const match = html.match(/<meta[^>]+name=["']article\.id["'][^>]+content=["']([^"']+)["']/i);
+  if (match) return match[1];
+  // Handle content before name
+  const match2 = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']article\.id["']/i);
+  return match2?.[1] ?? null;
+}
+
+/**
+ * Try mobile API extraction and wrap the result into a FetchResult.
+ * Returns a success FetchResult if API returns sufficient content, null otherwise.
+ */
+async function tryMobileApiExtraction(
+  html: string,
+  url: string,
+  startTime: number,
+  statusCode: number,
+  log: Log = logger
+): Promise<FetchResult | null> {
+  if (!isMobileApiSite(url)) return null;
+
+  const articleId = extractArticleId(html);
+  if (!articleId) {
+    log.debug({ url }, 'Mobile API site but no article.id meta tag found');
+    return null;
+  }
+
+  const result = await extractFromMobileApi(articleId, url);
+  if (!result.success || !result.content) return null;
+
+  log.info({ url, articleId, contentLength: result.content.length }, 'Extracted from mobile API');
+  return {
+    success: true,
+    url,
+    latencyMs: Date.now() - startTime,
+    statusCode,
+    title: extractPageTitle(html),
+    textContent: result.content,
+    extractedWordCount: countWords(result.content) || undefined,
+    extractionMethod: 'mobile-api',
+    rawHtml: null,
+  };
+}
+
+/**
  * Build site-specific request headers (User-Agent, Referer) for a URL.
  */
 function buildSiteHeaders(url: string): Record<string, string> {
@@ -544,6 +603,15 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     if (!validation.valid) {
       // Try Next.js data extraction and WP REST API for insufficient content
       if (validation.error === 'insufficient_content') {
+        const mobileFallback = await tryMobileApiExtraction(
+          response.html,
+          url,
+          startTime,
+          response.statusCode,
+          log
+        );
+        if (mobileFallback) return attachRawHtml(mobileFallback);
+
         const nextDataFallback = tryNextDataFallback(response.html, url, startTime, response, log);
         if (nextDataFallback) return attachRawHtml(nextDataFallback);
 
@@ -591,6 +659,19 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         },
         response.statusCode
       );
+    }
+
+    // Try mobile API extraction (highest priority for configured sites)
+    const mobileResult = await tryMobileApiExtraction(
+      response.html,
+      url,
+      startTime,
+      response.statusCode,
+      log
+    );
+    if (mobileResult) {
+      if (keepRawHtml) mobileResult.rawHtml = response.html;
+      return mobileResult;
     }
 
     // Try WP REST API first if available - structured data is more reliable than DOM extraction

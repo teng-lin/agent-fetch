@@ -14,6 +14,17 @@ import { logger } from '../logger.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(__dirname, '..', '..');
 
+// --- Mobile API config interface ---
+
+export interface MobileApiConfig {
+  /** API URL base where articleId will be appended (e.g., "https://api.example.com/articles/") */
+  apiUrl: string;
+  /** App identifier header */
+  appIdentifier: string;
+  /** Authorization token for API requests */
+  authToken: string;
+}
+
 // --- Site config interface ---
 
 export interface SiteConfig {
@@ -33,9 +44,17 @@ export interface SiteConfig {
   useWpRestApi?: boolean;
   /** Custom WP JSON API path for sites with non-standard endpoints */
   wpJsonApiPath?: string;
+  /** Mobile API extraction configuration */
+  mobileApiConfig?: MobileApiConfig;
 }
 
 // --- Zod validation schema ---
+
+export const MobileApiConfigSchema = z.object({
+  apiUrl: z.string().url(),
+  appIdentifier: z.string(),
+  authToken: z.string(),
+});
 
 export const SiteConfigSchema = z.object({
   userAgent: z.string().optional(),
@@ -46,9 +65,23 @@ export const SiteConfigSchema = z.object({
   notes: z.string().optional(),
   useWpRestApi: z.boolean().optional(),
   wpJsonApiPath: z.string().optional(),
+  mobileApiConfig: MobileApiConfigSchema.optional(),
 });
 
 // --- JSON parsing ---
+
+function parseMobileApiConfig(raw: unknown): MobileApiConfig | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const cfg = raw as Record<string, unknown>;
+  if (
+    typeof cfg.apiUrl !== 'string' ||
+    typeof cfg.appIdentifier !== 'string' ||
+    typeof cfg.authToken !== 'string'
+  ) {
+    return null;
+  }
+  return { apiUrl: cfg.apiUrl, appIdentifier: cfg.appIdentifier, authToken: cfg.authToken };
+}
 
 /**
  * Parse a raw JSON object into validated SiteConfig records.
@@ -71,6 +104,9 @@ export function parseSiteConfigJson(raw: Record<string, unknown>): Record<string
     if (typeof cfg.notes === 'string') config.notes = cfg.notes;
     if (typeof cfg.useWpRestApi === 'boolean') config.useWpRestApi = cfg.useWpRestApi;
     if (typeof cfg.wpJsonApiPath === 'string') config.wpJsonApiPath = cfg.wpJsonApiPath;
+
+    const maybeMobileApi = parseMobileApiConfig(cfg.mobileApiConfig);
+    if (maybeMobileApi) config.mobileApiConfig = maybeMobileApi;
 
     configs[domain] = config;
   }
@@ -239,4 +275,18 @@ export function getSiteCount(): number {
  */
 export function getConfiguredDomains(): string[] {
   return Object.keys(SITE_CONFIGS);
+}
+
+/**
+ * Check if a site supports mobile API extraction
+ */
+export function isMobileApiSite(url: string): boolean {
+  return getMobileApiConfig(url) !== null;
+}
+
+/**
+ * Get mobile API config for a site, or null if not configured
+ */
+export function getMobileApiConfig(url: string): MobileApiConfig | null {
+  return getSiteConfig(url)?.mobileApiConfig ?? null;
 }

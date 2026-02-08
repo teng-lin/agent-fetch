@@ -37,7 +37,8 @@ export type ExtractionMethod =
   | 'wp-ajax-content'
   | 'wp-rest-api'
   | 'wp-rest-api-pmc-list'
-  | 'prism-content-api';
+  | 'prism-content-api'
+  | 'mobile-api';
 
 export interface ExtractionResult {
   title: string | null;
