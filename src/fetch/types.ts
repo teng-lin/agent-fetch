@@ -9,6 +9,14 @@ export type ValidationError =
   | 'body_too_small'
   | 'insufficient_content';
 
+export type FetchError =
+  | ValidationError
+  | 'network_error'
+  | 'rate_limited'
+  | 'extraction_failed'
+  | 'pdf_fetch_failed'
+  | 'response_too_large';
+
 export interface ValidationResult {
   valid: boolean;
   error?: ValidationError;
@@ -49,7 +57,7 @@ export interface FetchResult {
   media?: MediaElement[];
 
   // Error fields
-  error?: string;
+  error?: FetchError;
   errorDetails?: {
     type?: string;
     statusCode?: number;

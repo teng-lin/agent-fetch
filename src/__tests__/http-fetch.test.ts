@@ -192,7 +192,8 @@ describe('httpFetch', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('forbidden');
+    expect(result.error).toBe('http_status_error');
+    expect(result.errorDetails?.type).toBe('forbidden');
     expect(result.suggestedAction).toBe('retry_with_extract');
     expect(result.hint).toBe('Site may require browser rendering');
     expect(result.errorDetails?.statusCode).toBe(403);
@@ -212,7 +213,8 @@ describe('httpFetch', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('not_found');
+    expect(result.error).toBe('http_status_error');
+    expect(result.errorDetails?.type).toBe('not_found');
     expect(result.suggestedAction).toBe('skip');
     expect(result.errorDetails?.statusCode).toBe(404);
   });
@@ -382,7 +384,8 @@ describe('httpFetch', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('Error: connect ETIMEDOUT');
+    expect(result.error).toBe('network_error');
+    expect(result.errorDetails?.type).toBe('Error: connect ETIMEDOUT');
     expect(httpRequest).toHaveBeenCalledTimes(3);
   });
 
@@ -400,7 +403,7 @@ describe('httpFetch', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('forbidden');
+    expect(result.error).toBe('http_status_error');
     expect(httpRequest).toHaveBeenCalledTimes(1);
   });
 
@@ -418,7 +421,8 @@ describe('httpFetch', () => {
     const result = await httpFetch(url);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('SSRF protection');
+    expect(result.error).toBe('network_error');
+    expect(result.errorDetails?.type).toContain('SSRF protection');
     expect(httpRequest).toHaveBeenCalledTimes(1);
   });
 

@@ -849,8 +849,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         url,
         startTime,
         {
-          error: response.error || 'http_error',
-          errorDetails: { statusCode: response.statusCode },
+          error: response.statusCode === 0 ? 'network_error' : 'http_status_error',
+          errorDetails: { statusCode: response.statusCode, type: response.error },
           suggestedAction: response.statusCode === 403 ? 'retry_with_extract' : 'skip',
           hint: response.statusCode === 403 ? 'Site may require browser rendering' : undefined,
         },

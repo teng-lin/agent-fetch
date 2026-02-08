@@ -2,7 +2,7 @@ import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { logger } from '../logger.js';
 
-function createTurndown(): TurndownService {
+function createTurndownService(): TurndownService {
   const td = new TurndownService({
     headingStyle: 'atx',
     hr: '---',
@@ -17,10 +17,13 @@ function createTurndown(): TurndownService {
   return td;
 }
 
+/** Module-level singleton — created once and reused across all calls. */
+const turndown = createTurndownService();
+
 export function htmlToMarkdown(html: string): string {
   if (!html || !html.trim()) return '';
   try {
-    return createTurndown().turndown(html);
+    return turndown.turndown(html);
   } catch (e) {
     logger.debug({ error: String(e), htmlLength: html.length }, 'Turndown conversion failed');
     return '';
