@@ -190,95 +190,92 @@ function getBestImageSrc(img: Element): string | null {
   return img.getAttribute('src');
 }
 
-/**
- * Extract media elements from HTML content in document order.
- * Deduplicates by resolved URL.
- *
- * @param contentHtml - The HTML content to extract media from
- * @param baseUrl - The base URL for resolving relative URLs
- * @returns Array of media elements in document order
- */
-export function extractMedia(contentHtml: string, baseUrl: string): MediaElement[] {
+/** Extract media from a pre-parsed DOM element, deduplicating by resolved URL. */
+export function extractMediaFromElement(root: Element, baseUrl: string): MediaElement[] {
   const media: MediaElement[] = [];
   const seen = new Set<string>();
 
-  try {
-    const { document } = parseHTML(`<div>${contentHtml}</div>`);
-    const root = document.querySelector('div');
-    if (!root) return media;
+  const walker = root.ownerDocument.createTreeWalker(root, 1); // 1 = NodeFilter.SHOW_ELEMENT
 
-    const walker = document.createTreeWalker(root, 1); // 1 = NodeFilter.SHOW_ELEMENT
+  let node: Node | null = walker.currentNode;
+  while (node) {
+    const el = node as Element;
+    const tagName = el.tagName?.toUpperCase();
 
-    let node: Node | null = walker.currentNode;
-    while (node) {
-      const el = node as Element;
-      const tagName = el.tagName?.toUpperCase();
-
-      switch (tagName) {
-        case 'IMG': {
-          const src = resolveUrl(getBestImageSrc(el), baseUrl);
-          if (src) {
-            const alt = el.getAttribute('alt');
-            addIfUnseen(media, seen, src, {
-              type: 'image',
-              src,
-              alt: alt || undefined,
-            });
-          }
-          break;
+    switch (tagName) {
+      case 'IMG': {
+        const src = resolveUrl(getBestImageSrc(el), baseUrl);
+        if (src) {
+          const alt = el.getAttribute('alt');
+          addIfUnseen(media, seen, src, {
+            type: 'image',
+            src,
+            alt: alt || undefined,
+          });
         }
-
-        case 'A': {
-          const href = el.getAttribute('href');
-          const ext = getDocumentExtension(href);
-          if (ext) {
-            const resolved = resolveUrl(href, baseUrl);
-            if (resolved) {
-              addIfUnseen(media, seen, resolved, {
-                type: 'document',
-                href: resolved,
-                text: el.textContent?.trim() || undefined,
-                extension: ext,
-              });
-            }
-          }
-          break;
-        }
-
-        case 'VIDEO': {
-          const src = resolveUrl(el.getAttribute('src'), baseUrl);
-          if (src) {
-            addIfUnseen(media, seen, src, { type: 'video', src });
-          }
-          break;
-        }
-
-        case 'IFRAME': {
-          const videoInfo = parseVideoEmbed(el.getAttribute('src'));
-          if (videoInfo) {
-            addIfUnseen(media, seen, videoInfo.src, {
-              type: 'video',
-              src: videoInfo.src,
-              provider: videoInfo.provider,
-            });
-          }
-          break;
-        }
-
-        case 'AUDIO': {
-          const src = resolveUrl(el.getAttribute('src'), baseUrl);
-          if (src) {
-            addIfUnseen(media, seen, src, { type: 'audio', src });
-          }
-          break;
-        }
+        break;
       }
 
-      node = walker.nextNode();
+      case 'A': {
+        const href = el.getAttribute('href');
+        const ext = getDocumentExtension(href);
+        if (ext) {
+          const resolved = resolveUrl(href, baseUrl);
+          if (resolved) {
+            addIfUnseen(media, seen, resolved, {
+              type: 'document',
+              href: resolved,
+              text: el.textContent?.trim() || undefined,
+              extension: ext,
+            });
+          }
+        }
+        break;
+      }
+
+      case 'VIDEO': {
+        const src = resolveUrl(el.getAttribute('src'), baseUrl);
+        if (src) {
+          addIfUnseen(media, seen, src, { type: 'video', src });
+        }
+        break;
+      }
+
+      case 'IFRAME': {
+        const videoInfo = parseVideoEmbed(el.getAttribute('src'));
+        if (videoInfo) {
+          addIfUnseen(media, seen, videoInfo.src, {
+            type: 'video',
+            src: videoInfo.src,
+            provider: videoInfo.provider,
+          });
+        }
+        break;
+      }
+
+      case 'AUDIO': {
+        const src = resolveUrl(el.getAttribute('src'), baseUrl);
+        if (src) {
+          addIfUnseen(media, seen, src, { type: 'audio', src });
+        }
+        break;
+      }
     }
-  } catch (e) {
-    logger.debug({ baseUrl, error: String(e) }, 'Media extraction failed');
+
+    node = walker.nextNode();
   }
 
   return media;
+}
+
+export function extractMedia(contentHtml: string, baseUrl: string): MediaElement[] {
+  try {
+    const { document } = parseHTML(`<div>${contentHtml}</div>`);
+    const root = document.querySelector('div');
+    if (!root) return [];
+    return extractMediaFromElement(root, baseUrl);
+  } catch (e) {
+    logger.debug({ baseUrl, error: String(e) }, 'Media extraction failed');
+    return [];
+  }
 }

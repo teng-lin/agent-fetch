@@ -1,6 +1,7 @@
 /**
  * HTTP fetch logic - fast extraction with proper error handling
  */
+import { randomUUID } from 'node:crypto';
 import httpcloak from 'httpcloak';
 import { httpRequest, httpPost, type HttpResponse } from './http-client.js';
 import { quickValidate } from './content-validator.js';
@@ -52,6 +53,9 @@ const NEXT_DATA_ROUTE_THRESHOLD = 2000;
  * prefer the DOM content. Catches API responses that return only a teaser.
  */
 const WP_DOM_COMPARATOR_RATIO = 2;
+
+/** Logger interface accepted by helper functions. */
+type Log = Pick<typeof logger, 'info' | 'debug' | 'warn' | 'error'>;
 
 /** Check if an error is a security error that should not be retried. */
 function isSecurityError(error: string | undefined): boolean {
@@ -147,7 +151,8 @@ async function tryWpRestApiFallback(
   startTime: number,
   response: { statusCode: number; html?: string },
   extracted: ExtractionResult | null,
-  ctx: RequestContext
+  ctx: RequestContext,
+  log: Log = logger
 ): Promise<FetchResult | null> {
   const wpApiUrl = resolveWpApiUrl(html, url);
   if (!wpApiUrl) return null;
@@ -155,7 +160,7 @@ async function tryWpRestApiFallback(
   const result = await tryWpRestApiExtraction(wpApiUrl, extracted, ctx);
   if (!result) return null;
 
-  logger.info({ url, apiUrl: wpApiUrl }, 'Recovered content from WP REST API');
+  log.info({ apiUrl: wpApiUrl }, 'Recovered content from WP REST API');
   return successResult(url, startTime, result, {
     statusCode: response.statusCode,
     rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
@@ -171,7 +176,8 @@ function tryNextDataFallback(
   html: string,
   url: string,
   startTime: number,
-  response: { statusCode: number; html?: string }
+  response: { statusCode: number; html?: string },
+  log: Log = logger
 ): FetchResult | null {
   if (!siteUseNextData(url)) return null;
 
@@ -181,14 +187,14 @@ function tryNextDataFallback(
     if (!result || !result.textContent || result.textContent.length < MIN_EXTRACTION_LENGTH)
       return null;
 
-    logger.info({ url, method: 'next-data' }, 'Recovered content from Next.js data');
+    log.info({ method: 'next-data' }, 'Recovered content from Next.js data');
     return successResult(url, startTime, result, {
       statusCode: response.statusCode,
       rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
       extractionMethod: 'next-data',
     });
   } catch (e) {
-    logger.debug({ url, error: String(e) }, 'Next.js data fallback failed');
+    log.debug({ error: String(e) }, 'Next.js data fallback failed');
     return null;
   }
 }
@@ -204,7 +210,8 @@ async function tryNextDataRoute(
   startTime: number,
   response: { statusCode: number; html?: string },
   domExtracted: ExtractionResult | null,
-  ctx: RequestContext
+  ctx: RequestContext,
+  log: Log = logger
 ): Promise<FetchResult | null> {
   const result = await fetchNextDataRoute(html, url, ctx);
   if (!result || !result.textContent) return null;
@@ -213,8 +220,8 @@ async function tryNextDataRoute(
   const domLen = domExtracted?.textContent?.length ?? 0;
   if (result.textContent.length <= domLen) return null;
 
-  logger.info(
-    { url, dataLen: result.textContent.length, domLen },
+  log.info(
+    { dataLen: result.textContent.length, domLen },
     'Next.js data route returned more content'
   );
 
@@ -231,10 +238,11 @@ async function tryNextDataRoute(
  */
 async function tryPrismContentApiExtraction(
   apiUrl: string,
-  ctx: RequestContext
+  ctx: RequestContext,
+  log: Log = logger
 ): Promise<ExtractionResult | null> {
   try {
-    logger.info({ apiUrl }, 'Trying Prism content API extraction');
+    log.info({ apiUrl }, 'Trying Prism content API extraction');
 
     const response = await httpRequest(
       apiUrl,
@@ -248,7 +256,7 @@ async function tryPrismContentApiExtraction(
 
     return parseArcAnsContent(JSON.parse(response.html));
   } catch (e) {
-    logger.debug({ apiUrl, error: String(e) }, 'Prism content API extraction failed');
+    log.debug({ apiUrl, error: String(e) }, 'Prism content API extraction failed');
     return null;
   }
 }
@@ -263,19 +271,20 @@ async function tryPrismContentApiFallback(
   url: string,
   startTime: number,
   response: { statusCode: number; html?: string },
-  ctx: RequestContext
+  ctx: RequestContext,
+  log: Log = logger
 ): Promise<FetchResult | null> {
   const config = detectPrismContentApi(html);
   if (!config) return null;
 
   const apiUrl = buildPrismContentApiUrl(config, url);
   if (!apiUrl) return null;
-  logger.debug({ url, apiUrl }, 'Detected Prism content API, trying extraction');
+  log.debug({ apiUrl }, 'Detected Prism content API, trying extraction');
 
-  const result = await tryPrismContentApiExtraction(apiUrl, ctx);
+  const result = await tryPrismContentApiExtraction(apiUrl, ctx, log);
   if (!result) return null;
 
-  logger.info({ url, apiUrl }, 'Recovered content from Prism content API');
+  log.info({ apiUrl }, 'Recovered content from Prism content API');
   return successResult(url, startTime, result, {
     statusCode: response.statusCode,
     rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
@@ -294,13 +303,14 @@ async function tryWpAjaxContentFallback(
   startTime: number,
   response: { statusCode: number; html?: string },
   domExtracted: ExtractionResult | null,
-  ctx: RequestContext
+  ctx: RequestContext,
+  log: Log = logger
 ): Promise<FetchResult | null> {
   const config = detectWpAjaxContent(html, url);
   if (!config) return null;
 
-  logger.debug(
-    { url, ajaxUrl: config.ajaxUrl, action: config.action },
+  log.debug(
+    { ajaxUrl: config.ajaxUrl, action: config.action },
     'Detected WP AJAX content pattern, trying extraction'
   );
 
@@ -335,14 +345,14 @@ async function tryWpAjaxContentFallback(
         }
       : parsed;
 
-    logger.info({ url, ajaxUrl: config.ajaxUrl }, 'Recovered content from WP AJAX endpoint');
+    log.info({ ajaxUrl: config.ajaxUrl }, 'Recovered content from WP AJAX endpoint');
     return successResult(url, startTime, result, {
       statusCode: response.statusCode,
       rawHtml: process.env.RECORD_HTML === 'true' ? (response.html ?? null) : null,
       extractionMethod: 'wp-ajax-content',
     });
   } catch (e) {
-    logger.debug({ url, error: String(e) }, 'WP AJAX content fallback failed');
+    log.debug({ error: String(e) }, 'WP AJAX content fallback failed');
     return null;
   }
 }
@@ -402,6 +412,8 @@ export interface HttpFetchOptions extends SelectorOptions {
 
 export async function httpFetch(url: string, options: HttpFetchOptions = {}): Promise<FetchResult> {
   const startTime = Date.now();
+  const requestId = randomUUID().slice(0, 8);
+  const log: Log = logger.child?.({ requestId, url }) ?? logger;
 
   // Use provided preset or resolve from UA
   const preset = options.preset ?? resolvePreset(getSiteUserAgent(url));
@@ -415,12 +427,12 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
   // Resolve proxy from option or env vars
   const proxy = resolveProxy(options.proxy);
   const cookies = options.cookies;
-  const ctx: RequestContext = { preset, timeout, proxy, cookies };
+  const ctx: RequestContext = { preset, timeout, proxy, cookies, requestId };
 
   try {
     // PDF detection: if URL looks like a PDF, fetch as binary and extract
     if (isPdfUrl(url)) {
-      logger.info({ url }, 'Detected PDF URL, fetching as binary');
+      log.info('Detected PDF URL, fetching as binary');
       const pdfResult = await fetchRemotePdfBuffer(url, preset, timeout, proxy, cookies);
       if (pdfResult) {
         return extractPdfFromBuffer(pdfResult.buffer, url, pdfResult.statusCode);
@@ -440,12 +452,12 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       if (slug) {
         const wpApiUrl = `${new URL(url).origin}/wp-json/wp/v2/posts?slug=${encodeURIComponent(slug)}`;
 
-        logger.info({ url, wpApiUrl }, 'Trying WP REST API (config-driven, skipping HTML)');
+        log.info({ wpApiUrl }, 'Trying WP REST API (config-driven, skipping HTML)');
 
         try {
           const wpResult = await tryWpRestApiExtraction(wpApiUrl, null, ctx);
           if (wpResult) {
-            logger.info({ url, wpApiUrl }, 'Extracted content from WP REST API (fast path)');
+            log.info({ wpApiUrl }, 'Extracted content from WP REST API (fast path)');
             return successResult(url, startTime, wpResult, {
               statusCode: 200,
               rawHtml: null,
@@ -453,17 +465,14 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
             });
           }
         } catch (e) {
-          logger.debug({ url, error: String(e) }, 'WP REST API fast path failed');
+          log.debug({ error: String(e) }, 'WP REST API fast path failed');
         }
 
-        logger.debug(
-          { url },
-          'WP REST API fast path returned no content, falling back to HTML fetch'
-        );
+        log.debug('WP REST API fast path returned no content, falling back to HTML fetch');
       }
     }
 
-    logger.info({ url }, 'HTTP fetch starting');
+    log.info('HTTP fetch starting');
 
     let response: HttpResponse;
     let attempt = 0;
@@ -475,7 +484,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
 
       attempt++;
       const delay = retryDelay(attempt - 1);
-      logger.info({ url, attempt, delay }, 'Retrying after network error');
+      log.info({ attempt, delay }, 'Retrying after network error');
       await new Promise((r) => setTimeout(r, delay));
     }
 
@@ -514,7 +523,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       ? response.headers['content-type'][0]
       : response.headers['content-type'];
     if (isPdfContentType(responseContentType)) {
-      logger.info({ url }, 'Detected PDF content-type in response, extracting as PDF');
+      log.info('Detected PDF content-type in response, extracting as PDF');
       const buffer = Buffer.from(response.html, 'latin1');
       return extractPdfFromBuffer(buffer, url, response.statusCode);
     }
@@ -535,7 +544,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
     if (!validation.valid) {
       // Try Next.js data extraction and WP REST API for insufficient content
       if (validation.error === 'insufficient_content') {
-        const nextDataFallback = tryNextDataFallback(response.html, url, startTime, response);
+        const nextDataFallback = tryNextDataFallback(response.html, url, startTime, response, log);
         if (nextDataFallback) return attachRawHtml(nextDataFallback);
 
         const wpFallback = await tryWpRestApiFallback(
@@ -544,7 +553,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           startTime,
           response,
           null,
-          ctx
+          ctx,
+          log
         );
         if (wpFallback) return attachRawHtml(wpFallback);
 
@@ -553,7 +563,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           url,
           startTime,
           response,
-          ctx
+          ctx,
+          log
         );
         if (prismFallback) return attachRawHtml(prismFallback);
 
@@ -563,7 +574,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           startTime,
           response,
           null,
-          ctx
+          ctx,
+          log
         );
         if (wpAjaxFallback) return attachRawHtml(wpAjaxFallback);
       }
@@ -598,8 +610,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           domLen > wpLen * WP_DOM_COMPARATOR_RATIO &&
           domLen >= GOOD_CONTENT_LENGTH
         ) {
-          logger.info(
-            { url, apiUrl: wpApiUrl, wpApiLen: wpLen, domLen },
+          log.info(
+            { apiUrl: wpApiUrl, wpApiLen: wpLen, domLen },
             'DOM extraction found more content than WP API, enriching with API metadata'
           );
           return successResult(url, startTime, enrichWpMetadata(domResult, wpResult), {
@@ -609,7 +621,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
           });
         }
 
-        logger.info({ url, apiUrl: wpApiUrl }, 'Extracted content from WP REST API');
+        log.info({ apiUrl: wpApiUrl }, 'Extracted content from WP REST API');
         return successResult(url, startTime, wpResult, {
           statusCode: response.statusCode,
           rawHtml: keepRawHtml ? response.html : null,
@@ -624,7 +636,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       url,
       startTime,
       response,
-      ctx
+      ctx,
+      log
     );
     if (prismResult) return attachRawHtml(prismResult);
 
@@ -654,7 +667,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         startTime,
         response,
         extracted,
-        ctx
+        ctx,
+        log
       );
       if (wpAjaxResult) return attachRawHtml(wpAjaxResult);
 
@@ -680,13 +694,14 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         startTime,
         response,
         extracted,
-        ctx
+        ctx,
+        log
       );
       if (dataRouteResult) return attachRawHtml(dataRouteResult);
     }
 
     const latencyMs = Date.now() - startTime;
-    logger.info({ url, latencyMs }, 'HTTP fetch succeeded');
+    log.info({ latencyMs }, 'HTTP fetch succeeded');
 
     return successResult(url, startTime, extracted, {
       latencyMs,
@@ -696,7 +711,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
       selectors: selectorOpts,
     });
   } catch (error) {
-    logger.error({ url, error: String(error) }, 'HTTP fetch failed');
+    log.error({ error: String(error) }, 'HTTP fetch failed');
 
     return failResult(url, startTime, {
       error: 'network_error',

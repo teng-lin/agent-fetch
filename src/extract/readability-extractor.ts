@@ -3,7 +3,7 @@
  */
 import { Readability } from '@mozilla/readability';
 
-import { type ExtractionResult, MIN_CONTENT_LENGTH } from './types.js';
+import { type ExtractionResult, type ExtractionMethod, MIN_CONTENT_LENGTH } from './types.js';
 import {
   extractPublishedTime,
   extractTitle,
@@ -18,7 +18,7 @@ import { logger } from '../logger.js';
 function buildReadabilityResult(
   article: ReturnType<Readability<string>['parse']>,
   document: Document,
-  method: string
+  method: ExtractionMethod
 ): ExtractionResult | null {
   if (!article?.textContent || article.textContent.length < MIN_CONTENT_LENGTH) {
     return null;

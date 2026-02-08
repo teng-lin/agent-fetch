@@ -67,13 +67,18 @@ function deduplicateParagraphs(document: Document): void {
   }
 }
 
+/** Run cleanup on a pre-parsed document (mutates in place). */
+export function cleanDocument(document: Document): void {
+  stripCaptions(document);
+  stripBoilerplate(document);
+  deduplicateParagraphs(document);
+}
+
 export function cleanExtractedHtml(html: string): CleanedHtml {
   if (!html) return { html: '', textContent: '' };
 
   const { document } = parseHTML(`<!DOCTYPE html><html><body>${html}</body></html>`);
-  stripCaptions(document);
-  stripBoilerplate(document);
-  deduplicateParagraphs(document);
+  cleanDocument(document);
   return {
     html: document.body.innerHTML,
     textContent: document.body.textContent?.trim() ?? '',

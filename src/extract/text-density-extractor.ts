@@ -15,7 +15,11 @@ import {
 } from './metadata-extractors.js';
 import { logger } from '../logger.js';
 
-export function tryTextDensityExtraction(html: string, url: string): ExtractionResult | null {
+export function tryTextDensityExtraction(
+  html: string,
+  url: string,
+  document?: Document
+): ExtractionResult | null {
   try {
     const extracted = extractContent(html);
 
@@ -23,18 +27,17 @@ export function tryTextDensityExtraction(html: string, url: string): ExtractionR
       return null;
     }
 
-    // Parse with linkedom for metadata extraction (reuses the same DOM lib as other strategies)
-    const { document } = parseHTML(html);
+    const doc = document ?? parseHTML(html).document;
 
     return {
-      title: extractTitle(document),
+      title: extractTitle(doc),
       byline: null,
       content: extracted.contentHtmls.join(''),
       textContent: extracted.content,
       excerpt: generateExcerpt(extracted.description ?? null, extracted.content),
-      siteName: extractSiteName(document),
-      publishedTime: extractPublishedTime(document),
-      lang: document.documentElement.lang || null,
+      siteName: extractSiteName(doc),
+      publishedTime: extractPublishedTime(doc),
+      lang: doc.documentElement.lang || null,
       method: 'text-density',
     };
   } catch (e) {

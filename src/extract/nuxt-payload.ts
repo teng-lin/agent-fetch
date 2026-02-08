@@ -32,9 +32,9 @@ interface NuxtParagraph {
   html: string;
 }
 
-export function extractNuxtPayload(html: string): unknown[] | null {
-  const { document } = parseHTML(html);
-  const script = document.querySelector('script#__NUXT_DATA__');
+export function extractNuxtPayload(html: string, document?: Document): unknown[] | null {
+  const doc = document ?? parseHTML(html).document;
+  const script = doc.querySelector('script#__NUXT_DATA__');
   if (!script?.textContent) return null;
 
   try {
@@ -155,9 +155,13 @@ function extractMetadata(document: Document): {
   return { title, byline, excerpt, publishedTime };
 }
 
-export function tryNuxtPayloadExtraction(html: string, url: string): ExtractionResult | null {
+export function tryNuxtPayloadExtraction(
+  html: string,
+  url: string,
+  document?: Document
+): ExtractionResult | null {
   try {
-    const payload = extractNuxtPayload(html);
+    const payload = extractNuxtPayload(html, document);
     if (!payload) return null;
 
     const paragraphs = extractParagraphs(payload);
@@ -166,8 +170,8 @@ export function tryNuxtPayloadExtraction(html: string, url: string): ExtractionR
     const converted = paragraphsToContent(paragraphs);
     if (!converted || converted.textContent.length < GOOD_CONTENT_LENGTH) return null;
 
-    const { document } = parseHTML(html);
-    const meta = extractMetadata(document);
+    const doc = document ?? parseHTML(html).document;
+    const meta = extractMetadata(doc);
 
     logger.debug(
       { url, paragraphs: paragraphs.length, textLen: converted.textContent.length },
@@ -178,9 +182,8 @@ export function tryNuxtPayloadExtraction(html: string, url: string): ExtractionR
       ...meta,
       content: converted.html,
       textContent: converted.textContent,
-      siteName:
-        document.querySelector('meta[property="og:site_name"]')?.getAttribute('content') ?? null,
-      lang: document.documentElement.lang || null,
+      siteName: doc.querySelector('meta[property="og:site_name"]')?.getAttribute('content') ?? null,
+      lang: doc.documentElement.lang || null,
       markdown: htmlToMarkdown(converted.html),
       method: 'nuxt-payload',
     };
