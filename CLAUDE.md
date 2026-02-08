@@ -81,7 +81,7 @@ npm run test:e2e:fetch:quick        # Critical + important priority
 
 Environment variables for filtering:
 
-- `TEST_SET`: 'stable' (default), 'latest', or 'all'
+- `TEST_SET`: 'stable', 'latest', or 'all' (default)
 - `TEST_PRIORITY`: 'critical', 'important' (comma-separated)
 - `TEST_TAGS`: filter by tags (comma-separated)
 - `TEST_SITES`: filter by site names (overrides other filters)

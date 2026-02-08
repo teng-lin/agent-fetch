@@ -5,7 +5,7 @@
  *
  * Run with: npm run test:e2e:fetch
  * Filter with environment variables:
- *   TEST_SET=stable|latest|all        - Which URLs to test (default: stable)
+ *   TEST_SET=stable|latest|all        - Which URLs to test (default: all)
  *   TEST_PRIORITY=critical,important  - Filter by priority (OR within)
  *   TEST_TAGS=ua-spoofing,cookies     - Filter by tags (OR within)
  *   TEST_SITES=NYTimes,WSJ            - Filter by site name (overrides others)
@@ -18,7 +18,7 @@ import { loadFixtures, runWithConcurrency, filterTestCases, wordCount } from './
 import { recordTestResult, startTestRun, endTestRun } from './db-recorder.js';
 
 const TEST_CONCURRENCY = parseInt(process.env.TEST_CONCURRENCY || '5', 10);
-const TEST_SET = process.env.TEST_SET || 'stable';
+const TEST_SET = process.env.TEST_SET || 'all';
 
 /** Fetch-specific test case */
 interface FetchTestCase {
