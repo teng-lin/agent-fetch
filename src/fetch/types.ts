@@ -10,15 +10,12 @@ export type ValidationError =
   | 'insufficient_content';
 
 export type FetchError =
+  | ValidationError
   | 'network_error'
   | 'rate_limited'
   | 'extraction_failed'
   | 'pdf_fetch_failed'
-  | 'response_too_large'
-  | 'http_status_error'
-  | 'wrong_content_type'
-  | 'body_too_small'
-  | 'insufficient_content';
+  | 'response_too_large';
 
 export interface ValidationResult {
   valid: boolean;

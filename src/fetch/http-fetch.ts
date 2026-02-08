@@ -29,7 +29,7 @@ import { detectWpAjaxContent, parseWpAjaxResponse } from '../extract/wp-ajax-con
 import { logger } from '../logger.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
 import type { ExtractionResult, SelectorOptions } from '../extract/types.js';
-import type { FetchResult, ValidationError, FetchError } from './types.js';
+import type { FetchResult, ValidationError } from './types.js';
 import { parseHTML } from 'linkedom';
 import { GOOD_CONTENT_LENGTH } from '../extract/types.js';
 
@@ -849,8 +849,8 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
         url,
         startTime,
         {
-          error: (response.error as FetchError | undefined) || 'http_status_error',
-          errorDetails: { statusCode: response.statusCode },
+          error: response.statusCode === 0 ? 'network_error' : 'http_status_error',
+          errorDetails: { statusCode: response.statusCode, type: response.error },
           suggestedAction: response.statusCode === 403 ? 'retry_with_extract' : 'skip',
           hint: response.statusCode === 403 ? 'Site may require browser rendering' : undefined,
         },

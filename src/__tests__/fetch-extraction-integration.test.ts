@@ -183,8 +183,8 @@ describe('fetch-extraction integration', () => {
     const result = await httpFetch('https://example.com/down');
 
     expect(result.success).toBe(false);
-    expect(result.error).toBeDefined();
-    expect(result.error).toContain('Connection refused');
+    expect(result.error).toBe('http_status_error');
+    expect(result.errorDetails?.type).toBe('Connection refused');
   });
 
   // -------------------------------------------------------------------------

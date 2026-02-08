@@ -2,7 +2,7 @@ import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { logger } from '../logger.js';
 
-const turndown = (() => {
+function createTurndownService(): TurndownService {
   const td = new TurndownService({
     headingStyle: 'atx',
     hr: '---',
@@ -15,7 +15,10 @@ const turndown = (() => {
   td.use(gfm);
   td.remove(['script', 'style']);
   return td;
-})();
+}
+
+/** Module-level singleton — created once and reused across all calls. */
+const turndown = createTurndownService();
 
 export function htmlToMarkdown(html: string): string {
   if (!html || !html.trim()) return '';
