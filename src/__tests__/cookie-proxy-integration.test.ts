@@ -75,7 +75,7 @@ function wpAjaxInsufficientPage(): string {
   return `<!DOCTYPE html><html><head><title>AJAX Page</title>
     <script>
       var ajaxurl = 'https://example.com/wp-admin/admin-ajax.php';
-      let article_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+      let articleId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
       jQuery.ajax({ action: 'fetch_article_content', data: {id: articleId} });
     </script>
   </head><body><p>Short teaser.</p>${HTML_FILLER}</body></html>`;

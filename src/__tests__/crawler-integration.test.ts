@@ -366,7 +366,7 @@ describe('crawler integration', () => {
       // Fragment-only link (#section-1) resolves to the same page → deduped as already visited
       // /page#anchor and /page normalize to the same URL → fetched only once
       const pageFetches = fetchedUrls.filter((u) => u === 'https://example.com/page');
-      expect(pageFetches.length).toBeLessThanOrEqual(1);
+      expect(pageFetches.length).toBe(1);
     });
 
     it('applies include pattern filtering', async () => {
