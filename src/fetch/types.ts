@@ -1,7 +1,9 @@
 /**
  * Shared types for the fetch module
  */
-import type { MediaElement } from '../extract/types.js';
+import type { ExtractionMethod, MediaElement } from '../extract/types.js';
+
+export type FetchExtractionMethod = ExtractionMethod | 'next-data-route' | 'pdf-parse';
 
 export type ValidationError =
   | 'http_status_error'
@@ -34,6 +36,7 @@ export interface RequestContext {
   timeout?: number;
   proxy?: string;
   cookies?: Record<string, string>;
+  requestId?: string;
 }
 
 export interface FetchResult {
@@ -83,5 +86,5 @@ export interface FetchResult {
   // E2E recording fields
   statusCode?: number | null; // HTTP response status (200, 403, 429, etc.)
   rawHtml?: string | null; // Raw HTML response body
-  extractionMethod?: string | null; // Which strategy won: 'readability' | 'json-ld' | etc.
+  extractionMethod?: FetchExtractionMethod | null; // Which strategy won
 }

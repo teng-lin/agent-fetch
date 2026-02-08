@@ -23,6 +23,22 @@ export interface SelectorOptions {
   removeSelector?: string | string[];
 }
 
+export type ExtractionMethod =
+  | 'readability'
+  | 'readability-relaxed'
+  | 'next-rsc'
+  | 'nuxt-payload'
+  | 'react-router-hydration'
+  | 'next-data'
+  | 'next-data-html'
+  | 'json-ld'
+  | `selector:${string}`
+  | 'text-density'
+  | 'wp-ajax-content'
+  | 'wp-rest-api'
+  | 'wp-rest-api-pmc-list'
+  | 'prism-content-api';
+
 export interface ExtractionResult {
   title: string | null;
   byline: string | null;
@@ -33,7 +49,7 @@ export interface ExtractionResult {
   publishedTime: string | null;
   lang: string | null;
   markdown?: string | null;
-  method: string;
+  method: ExtractionMethod;
 
   // Schema.org access metadata (from publisher-embedded JSON-LD)
   isAccessibleForFree?: boolean;

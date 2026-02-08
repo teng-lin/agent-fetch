@@ -66,7 +66,7 @@ describe('extract/utils', () => {
       siteName: null,
       publishedTime: null,
       lang: null,
-      method: 'test',
+      method: 'readability',
     });
 
     it('returns true when content meets threshold', () => {

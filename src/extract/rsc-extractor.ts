@@ -38,7 +38,11 @@ function isNaturalLanguage(text: string): boolean {
   return spaceCount / len > 0.1;
 }
 
-export function tryNextRscExtraction(html: string, url: string): ExtractionResult | null {
+export function tryNextRscExtraction(
+  html: string,
+  url: string,
+  document?: Document
+): ExtractionResult | null {
   try {
     if (!html.includes('self.__next_f.push(')) return null;
 
@@ -100,17 +104,17 @@ export function tryNextRscExtraction(html: string, url: string): ExtractionResul
 
     if (textContent.length < MIN_CONTENT_LENGTH) return null;
 
-    const { document } = parseHTML(html);
+    const doc = document ?? parseHTML(html).document;
 
     return {
-      title: extractTitle(document),
+      title: extractTitle(doc),
       byline: null,
       content: textContent,
       textContent,
       excerpt: generateExcerpt(null, textContent),
-      siteName: extractSiteName(document),
-      publishedTime: extractPublishedTime(document),
-      lang: document.documentElement.lang || null,
+      siteName: extractSiteName(doc),
+      publishedTime: extractPublishedTime(doc),
+      lang: doc.documentElement.lang || null,
       method: 'next-rsc',
     };
   } catch (e) {

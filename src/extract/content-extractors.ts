@@ -8,6 +8,7 @@ import { parseHTML } from 'linkedom';
 
 import {
   type ExtractionResult,
+  type MediaElement,
   type SelectorOptions,
   MIN_CONTENT_LENGTH,
   GOOD_CONTENT_LENGTH,
@@ -17,9 +18,9 @@ import { meetsThreshold } from './utils.js';
 import { sitePreferJsonLd, siteUseNextData } from '../sites/site-config.js';
 import { tryNuxtPayloadExtraction } from './nuxt-payload.js';
 import { tryReactRouterHydrationExtraction } from './react-router-hydration.js';
-import { extractMedia } from './media-extractor.js';
+import { extractMediaFromElement } from './media-extractor.js';
 import { logger } from '../logger.js';
-import { cleanExtractedHtml } from './content-cleanup.js';
+import { cleanDocument } from './content-cleanup.js';
 
 // Sub-module imports used by the orchestrator (also re-exported below)
 import { tryReadability } from './readability-extractor.js';
@@ -238,21 +239,37 @@ export function extractFromHtml(
    * Media is extracted from the article content HTML, not the raw page HTML.
    */
   function finalizeResult(result: ExtractionResult): ExtractionResult {
-    // Run post-extraction cleanup on HTML-based methods
     let cleaned = result;
-    if (result.content && !SKIP_CLEANUP_METHODS.has(result.method)) {
+    let media: MediaElement[] | undefined;
+
+    if (result.content) {
+      const { document: contentDoc } = parseHTML(
+        `<!DOCTYPE html><html><body>${result.content}</body></html>`
+      );
+
+      // Run post-extraction cleanup on HTML-based methods
+      if (!SKIP_CLEANUP_METHODS.has(result.method)) {
+        try {
+          cleanDocument(contentDoc);
+          cleaned = {
+            ...result,
+            content: contentDoc.body.innerHTML,
+            textContent: contentDoc.body.textContent?.trim() ?? '',
+          };
+        } catch (e) {
+          logger.debug({ url, method: result.method, err: e }, 'Content cleanup failed');
+        }
+      }
+
+      // Extract media from same parsed document (avoids second parse)
       try {
-        const out = cleanExtractedHtml(result.content);
-        cleaned = { ...result, content: out.html, textContent: out.textContent };
+        media = extractMediaFromElement(contentDoc.body, url);
       } catch (e) {
-        logger.debug({ url, method: result.method, error: String(e) }, 'Content cleanup failed');
+        logger.debug({ url, method: result.method, err: e }, 'Media extraction failed');
       }
     }
 
     const md = withMarkdown(cleaned);
-
-    // Extract media from the extracted content HTML
-    const media = cleaned.content ? extractMedia(cleaned.content, url) : undefined;
 
     if (!schemaOrgAccess) {
       return { ...md, media };
@@ -295,9 +312,9 @@ export function extractFromHtml(
     jsonLdResult = tryJsonLdExtraction(document, url);
   }
   const selectorResult = trySelectorExtraction(document, url);
-  const textDensityResult = tryTextDensityExtraction(html, url);
-  const rscResult = tryNextRscExtraction(html, url);
-  const nuxtResult = tryNuxtPayloadExtraction(html, url);
+  const textDensityResult = tryTextDensityExtraction(html, url, document);
+  const rscResult = tryNextRscExtraction(html, url, document);
+  const nuxtResult = tryNuxtPayloadExtraction(html, url, document);
   const reactRouterResult = tryReactRouterHydrationExtraction(html, url, document);
 
   // Comparator: prefer text-density if it found significantly more content

@@ -11,7 +11,7 @@ import { detectWpRestApi } from '../extract/content-extractors.js';
 import { getSiteWpJsonApiPath, siteUseWpRestApi } from '../sites/site-config.js';
 import { htmlToMarkdown } from '../extract/markdown.js';
 import { htmlToText } from '../extract/utils.js';
-import type { ExtractionResult } from '../extract/types.js';
+import type { ExtractionMethod, ExtractionResult } from '../extract/types.js';
 import { GOOD_CONTENT_LENGTH } from '../extract/types.js';
 import type { RequestContext } from './types.js';
 import { logger } from '../logger.js';
@@ -187,7 +187,7 @@ export async function tryWpRestApiExtraction(
     // Check for PMC list structure (has pmc_list_order in meta)
     const pmcListOrder = detectPmcListOrder(json);
     let contentHtml = resolveWpField(json.content) ?? '';
-    let method = 'wp-rest-api';
+    let method: ExtractionMethod = 'wp-rest-api';
 
     if (pmcListOrder && pmcListOrder.length > 0) {
       // This is a PMC list - fetch all list items
