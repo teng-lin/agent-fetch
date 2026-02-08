@@ -3,6 +3,7 @@
  */
 import { type ExtractionResult, MIN_CONTENT_LENGTH } from './types.js';
 import { extractPublishedTime, extractSiteName } from './metadata-extractors.js';
+import { sanitizeHtml, htmlToText } from './utils.js';
 import { logger } from '../logger.js';
 
 /** JSON-LD article types that contain extractable content */
@@ -63,15 +64,18 @@ function parseJsonLdItem(
 ): Omit<ExtractionResult, 'method' | 'lang' | 'siteName' | 'publishedTime'> | null {
   if (!isArticleType(item)) return null;
 
-  const content =
-    (item.articleBody as string) ?? (item.text as string) ?? (item.description as string);
-  if (!content) return null;
+  const raw = (item.articleBody as string) ?? (item.text as string) ?? (item.description as string);
+  if (!raw) return null;
+
+  const isHtml = /<(?:p|div|br|span|h[1-6])[\s>/]/i.test(raw);
+  const content = isHtml ? sanitizeHtml(raw) : raw;
+  const textContent = isHtml ? htmlToText(content) : raw;
 
   return {
     title: (item.headline as string) ?? (item.name as string) ?? null,
     byline: extractAuthorFromJsonLd(item.author),
     content,
-    textContent: content,
+    textContent,
     excerpt: (item.description as string) ?? null,
   };
 }
