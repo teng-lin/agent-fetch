@@ -1,6 +1,6 @@
 {
   "name": "@teng-lin/agent-fetch",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Full-content web fetcher with Chrome TLS fingerprinting and multi-strategy content extraction",
   "type": "module",
   "bin": {
