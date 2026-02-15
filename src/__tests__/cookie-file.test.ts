@@ -264,6 +264,11 @@ describe('resolveCookieFile', () => {
     delete process.env.AGENT_FETCH_COOKIE_FILE;
     expect(resolveCookieFile('')).toBeUndefined();
   });
+
+  it('explicit empty string overrides env var', () => {
+    process.env.AGENT_FETCH_COOKIE_FILE = '/env/path';
+    expect(resolveCookieFile('')).toBeUndefined();
+  });
 });
 
 describe('loadCookiesFromFile', () => {

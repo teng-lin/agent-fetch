@@ -100,7 +100,8 @@ export function filterCookiesForUrl(
  * Priority: explicit > AGENT_FETCH_COOKIE_FILE
  */
 export function resolveCookieFile(explicit?: string): string | undefined {
-  return explicit || process.env.AGENT_FETCH_COOKIE_FILE || undefined;
+  if (explicit !== undefined) return explicit || undefined;
+  return process.env.AGENT_FETCH_COOKIE_FILE || undefined;
 }
 
 /**
