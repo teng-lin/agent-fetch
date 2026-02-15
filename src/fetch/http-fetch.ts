@@ -35,6 +35,7 @@ import {
 } from './wp-rest-api.js';
 import { fetchNextDataRoute } from './next-data-route.js';
 import { extractFromMobileApi } from '../extract/mobile-extractor.js';
+import { resolveCookieFile, loadCookiesFromFile } from './cookie-file.js';
 
 // Minimum content length (chars) for successful extraction
 const MIN_EXTRACTION_LENGTH = 100;
@@ -467,6 +468,12 @@ export interface HttpFetchOptions extends SelectorOptions {
    * Cookies to send with every request (name -> value).
    */
   cookies?: Record<string, string>;
+  /**
+   * Path to a Netscape HTTP Cookie File. Falls back to AGENT_FETCH_COOKIE_FILE env var.
+   * Cookies are filtered by domain/path/secure for the target URL.
+   * Explicit `cookies` take precedence over cookie file entries.
+   */
+  cookieFile?: string;
 }
 
 export async function httpFetch(url: string, options: HttpFetchOptions = {}): Promise<FetchResult> {
@@ -485,7 +492,11 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
 
   // Resolve proxy from option or env vars
   const proxy = resolveProxy(options.proxy);
-  const cookies = options.cookies;
+
+  // Resolve cookies: cookie file as base, explicit cookies win on conflict
+  const fileCookies = loadCookiesFromFile(resolveCookieFile(options.cookieFile), url);
+  const cookies =
+    fileCookies || options.cookies ? { ...fileCookies, ...options.cookies } : undefined;
   const ctx: RequestContext = { preset, timeout, proxy, cookies, requestId };
 
   try {
