@@ -5,6 +5,7 @@ import {
   filterCookiesForUrl,
   resolveCookieFile,
   loadCookiesFromFile,
+  mergeCookies,
 } from '../fetch/cookie-file.js';
 import type { NetscapeCookie } from '../fetch/cookie-file.js';
 
@@ -161,6 +162,12 @@ describe('filterCookiesForUrl', () => {
       expect(result).toEqual({ test: 'val' });
     });
 
+    it('rejects path with same prefix but no segment boundary (/api vs /apiv2)', () => {
+      const cookies = [makeCookie({ path: '/api' })];
+      const result = filterCookiesForUrl(cookies, 'https://example.com/apiv2');
+      expect(result).toEqual({});
+    });
+
     it('rejects non-matching path', () => {
       const cookies = [makeCookie({ path: '/api' })];
       const result = filterCookiesForUrl(cookies, 'https://example.com/web');
@@ -281,5 +288,39 @@ describe('loadCookiesFromFile', () => {
 
     const result = loadCookiesFromFile('/path/to/cookies.txt', 'https://example.com/');
     expect(result).toBeUndefined();
+  });
+
+  it('throws with descriptive message when file not found', () => {
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw new Error("ENOENT: no such file or directory, open '/missing.txt'");
+    });
+
+    expect(() => loadCookiesFromFile('/missing.txt', 'https://example.com/')).toThrow(
+      'Failed to read cookie file: /missing.txt'
+    );
+  });
+});
+
+describe('mergeCookies', () => {
+  it('returns undefined when both sources are undefined', () => {
+    expect(mergeCookies(undefined, undefined)).toBeUndefined();
+  });
+
+  it('returns file cookies when no explicit cookies', () => {
+    expect(mergeCookies({ a: '1' }, undefined)).toEqual({ a: '1' });
+  });
+
+  it('returns explicit cookies when no file cookies', () => {
+    expect(mergeCookies(undefined, { b: '2' })).toEqual({ b: '2' });
+  });
+
+  it('merges both sources with explicit taking precedence', () => {
+    const file = { shared: 'file', fileOnly: 'f' };
+    const explicit = { shared: 'explicit', explicitOnly: 'e' };
+    expect(mergeCookies(file, explicit)).toEqual({
+      shared: 'explicit',
+      fileOnly: 'f',
+      explicitOnly: 'e',
+    });
   });
 });

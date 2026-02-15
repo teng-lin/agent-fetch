@@ -35,7 +35,7 @@ import {
 } from './wp-rest-api.js';
 import { fetchNextDataRoute } from './next-data-route.js';
 import { extractFromMobileApi } from '../extract/mobile-extractor.js';
-import { resolveCookieFile, loadCookiesFromFile } from './cookie-file.js';
+import { resolveCookieFile, loadCookiesFromFile, mergeCookies } from './cookie-file.js';
 
 // Minimum content length (chars) for successful extraction
 const MIN_EXTRACTION_LENGTH = 100;
@@ -495,8 +495,7 @@ export async function httpFetch(url: string, options: HttpFetchOptions = {}): Pr
 
   // Resolve cookies: cookie file as base, explicit cookies win on conflict
   const fileCookies = loadCookiesFromFile(resolveCookieFile(options.cookieFile), url);
-  const cookies =
-    fileCookies || options.cookies ? { ...fileCookies, ...options.cookies } : undefined;
+  const cookies = mergeCookies(fileCookies, options.cookies);
   const ctx: RequestContext = { preset, timeout, proxy, cookies, requestId };
 
   try {

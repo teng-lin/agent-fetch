@@ -7,7 +7,7 @@ import { realpathSync, readFileSync, existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { httpFetch, resolveProxy } from './fetch/http-fetch.js';
 import { httpRequest, closeAllSessions } from './fetch/http-client.js';
-import { resolveCookieFile, loadCookiesFromFile } from './fetch/cookie-file.js';
+import { resolveCookieFile, loadCookiesFromFile, mergeCookies } from './fetch/cookie-file.js';
 import { extractPdfFromBuffer } from './extract/pdf-extractor.js';
 import { crawl } from './crawl/crawler.js';
 import type { CrawlOptions } from './crawl/types.js';
@@ -300,10 +300,8 @@ export function parseCrawlArgs(args: string[]): CrawlParseResult {
     return { kind: 'error', message: 'Crawl URL must start with http:// or https://' };
   }
 
-  const explicitCookies = parseCookies(flags.cookie);
   const fileCookies = loadCookiesFromFile(resolveCookieFile(flags.cookieFile), positional[0]);
-  const mergedCookies =
-    fileCookies || explicitCookies ? { ...fileCookies, ...explicitCookies } : undefined;
+  const cookies = mergeCookies(fileCookies, parseCookies(flags.cookie));
 
   return {
     kind: 'ok',
@@ -320,7 +318,7 @@ export function parseCrawlArgs(args: string[]): CrawlParseResult {
       targetSelector: flags.select,
       removeSelector: flags.remove,
       proxy: flags.proxy,
-      cookies: mergedCookies,
+      cookies,
     },
     warnings,
   };
@@ -489,11 +487,8 @@ export async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const explicitCookies = parseCookies(opts.cookie);
     const fileCookies = loadCookiesFromFile(resolveCookieFile(opts.cookieFile), opts.url);
-    // Merge: file cookies as base, explicit --cookie wins on conflict
-    const cookies =
-      fileCookies || explicitCookies ? { ...fileCookies, ...explicitCookies } : undefined;
+    const cookies = mergeCookies(fileCookies, parseCookies(opts.cookie));
 
     // --raw mode: fetch HTML without extraction
     if (opts.raw) {

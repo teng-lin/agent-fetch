@@ -73,18 +73,21 @@ export function filterCookiesForUrl(
     if (cookie.secure && !isSecure) continue;
 
     // Domain matching
-    const domainWithoutDot = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+    const cookieDomain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
 
     if (cookie.includeSubdomains) {
       // Must match exactly or be a subdomain (with dot boundary)
-      if (hostname !== domainWithoutDot && !hostname.endsWith('.' + domainWithoutDot)) continue;
+      if (hostname !== cookieDomain && !hostname.endsWith('.' + cookieDomain)) continue;
     } else {
       // Exact match only
-      if (hostname !== domainWithoutDot) continue;
+      if (hostname !== cookieDomain) continue;
     }
 
-    // Path matching (prefix)
-    if (!path.startsWith(cookie.path)) continue;
+    // Path matching (RFC 6265 §5.1.4: must match at segment boundary)
+    if (path !== cookie.path) {
+      if (!path.startsWith(cookie.path)) continue;
+      if (!cookie.path.endsWith('/') && path[cookie.path.length] !== '/') continue;
+    }
 
     result[cookie.name] = cookie.value;
   }
@@ -110,9 +113,27 @@ export function loadCookiesFromFile(
 ): Record<string, string> | undefined {
   if (!cookieFilePath) return undefined;
 
-  const content = readFileSync(cookieFilePath, 'utf-8');
+  let content: string;
+  try {
+    content = readFileSync(cookieFilePath, 'utf-8');
+  } catch (err) {
+    throw new Error(`Failed to read cookie file: ${cookieFilePath}: ${(err as Error).message}`);
+  }
   const cookies = parseNetscapeCookieFile(content);
   const filtered = filterCookiesForUrl(cookies, url);
 
   return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
+/**
+ * Merge cookie file entries with explicit cookies.
+ * Explicit cookies take precedence over cookie file entries on name conflict.
+ * Returns undefined if neither source provides cookies.
+ */
+export function mergeCookies(
+  fileCookies: Record<string, string> | undefined,
+  explicitCookies: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!fileCookies && !explicitCookies) return undefined;
+  return { ...fileCookies, ...explicitCookies };
 }
