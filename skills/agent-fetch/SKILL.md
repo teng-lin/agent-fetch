@@ -1,6 +1,6 @@
 ---
 name: agent-fetch
-description: Fetch and extract full article content from URLs. Returns complete text with structure (headings, links, lists) instead of summaries. 7 extraction strategies, browser impersonation, 200-700ms.
+description: Fetch and extract full article content from URLs. Returns complete text with structure (headings, links, lists) instead of summaries. Multiple extraction strategies, browser impersonation, cookies, crawling, custom selectors, 200-700ms.
 ---
 
 # agent-fetch Skill
@@ -83,31 +83,80 @@ Plain text content without formatting or metadata.
 npx agent-fetch "<url>" --text
 ```
 
-## Why agent-fetch Extracts More
+### `/agent-fetch cookies` - Use Persistent Cookies
 
-agent-fetch runs 7 extraction strategies in parallel and picks the most complete result:
+Load cookies from a Netscape format file or pass inline:
 
-| Strategy                    | What it does                                              |
-| --------------------------- | --------------------------------------------------------- |
-| **Readability**             | Mozilla's Reader View algorithm (strict + relaxed)        |
-| **Text density**            | Statistical text-to-tag ratio analysis (CETD)             |
-| **JSON-LD**                 | Parses schema.org structured data                         |
-| **Next.js**                 | Extracts from page props (`__NEXT_DATA__`)                |
-| **React Server Components** | Parses streaming RSC payloads                             |
-| **WordPress REST API**      | Fetches via `/wp-json/wp/v2/` endpoints                   |
-| **CSS selectors**           | Probes semantic containers (`<article>`, `.post-content`) |
+```bash
+# From Netscape cookie file (export from browser)
+npx agent-fetch "<url>" --cookie-file ~/.cookies.txt
 
-The longest valid result wins. Metadata (author, date, site name) is composed from the best source across all strategies.
+# Inline cookies (repeatable)
+npx agent-fetch "<url>" --cookie "sessionId=abc123; theme=dark"
+```
 
-## agent-fetch vs Built-in Web Fetch
+### `/agent-fetch selectors <url>` - Custom CSS Selectors
 
-|                        | agent-fetch                          | Built-in web fetch |
-| ---------------------- | ------------------------------------ | ------------------ |
-| **Content**            | Full article text                    | Summary/truncation |
-| **Structure**          | Markdown with headings, links, lists | Plain text         |
-| **Metadata**           | Title, author, date, site name       | None               |
-| **Extraction**         | 7 strategies (best result wins)      | Basic parse        |
-| **TLS fingerprinting** | Browser impersonation via httpcloak  | Basic headers      |
-| **Speed**              | 200-700ms                            | 2-5s               |
-| **Install needed**     | Yes (npm)                            | No (built-in)      |
-| **JavaScript**         | No                                   | Yes                |
+Extract specific elements or remove unwanted ones:
+
+```bash
+# Extract only the article, remove navigation and ads
+npx agent-fetch "<url>" --select "article" --remove "nav, .sidebar, [class*='ad']"
+
+# Extract all divs with class "post-content"
+npx agent-fetch "<url>" --select ".post-content"
+```
+
+### `/agent-fetch crawl <url>` - Crawl Multiple Pages
+
+Follow links and extract content from multiple pages:
+
+```bash
+# Crawl with defaults (depth: 3, max 100 pages)
+npx agent-fetch crawl "<url>"
+
+# Deeper crawl with concurrency control
+npx agent-fetch crawl "<url>" --depth 5 --limit 50 --concurrency 3
+
+# Include/exclude specific URL patterns
+npx agent-fetch crawl "<url>" --include "*/blog/*" --exclude "**/archive/**"
+
+# Add rate limiting delay between requests
+npx agent-fetch crawl "<url>" --delay 1000
+
+# Allow cross-origin (stay on same origin by default)
+npx agent-fetch crawl "<url>" --no-same-origin
+
+# Output as JSONL for processing
+npx agent-fetch crawl "<url>" --json
+```
+
+### `/agent-fetch pdf <file>` - Extract from PDF
+
+Extract text content from local PDF files:
+
+```bash
+# Extract PDF as markdown with metadata
+npx agent-fetch document.pdf
+
+# JSON output for programmatic access
+npx agent-fetch document.pdf --json
+
+# Just the text content
+npx agent-fetch document.pdf --text
+```
+
+### `/agent-fetch preset` - Custom TLS Fingerprint
+
+Impersonate different browsers to bypass fingerprinting checks:
+
+```bash
+# Chrome 143 (default)
+npx agent-fetch "<url>" --preset "chrome-143"
+
+# iOS Safari 18
+npx agent-fetch "<url>" --preset "ios-safari-18"
+
+# Android Chrome 143
+npx agent-fetch "<url>" --preset "android-chrome-143"
+```

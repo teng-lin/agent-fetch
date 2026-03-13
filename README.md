@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/teng-lin/agent-fetch/actions/workflows/ci.yml/badge.svg)](https://github.com/teng-lin/agent-fetch/actions/workflows/ci.yml)
 
-**Full-content web fetcher for AI agents and content workflows.** Standard HTTP tools (curl, wget, or an agent's built-in web fetch) are often served truncated or different responses because servers inspect the client's network fingerprint. agent-fetch uses [browser impersonation](https://github.com/sardanioss/httpcloak) so servers respond as they would to a real browser, then runs 9 extraction strategies to pull the complete article — every paragraph, heading, and link. Runs locally with no API keys or cloud dependencies.
+**Full-content web fetcher for AI agents and content workflows.** Standard HTTP tools (curl, wget, or an agent's built-in web fetch) are often served truncated or different responses because servers inspect the client's network fingerprint. agent-fetch uses [browser impersonation](https://github.com/sardanioss/httpcloak) so servers respond as they would to a real browser, then runs multiple extraction strategies to pull the complete article — every paragraph, heading, and link. Also supports multi-page crawling, persistent cookies, and custom CSS selectors. Runs locally with no API keys or cloud dependencies.
 
 Also useful for:
 
@@ -19,7 +19,7 @@ Also useful for:
 | **Structure**             | Plain text blob       | Markdown (varies)     | Markdown with headings, links, lists                                                            |
 | **Runs locally**          | Yes                   | No                    | Yes                                                                                             |
 | **API key required**      | No                    | Yes                   | No                                                                                              |
-| **Extraction strategies** | 1 (basic parse)       | 1–2                   | 9 (Readability, JSON-LD, Next.js, RSC, Nuxt, React Router, WP API, text-density, CSS selectors) |
+| **Extraction strategies** | 1 (basic parse)       | 1–2                   | Multiple (Readability, JSON-LD, Next.js, RSC, WP API, text-density, CSS selectors) |
 | **Open source**           | N/A                   | Partial               | Yes                                                                                             |
 
 ## Install
@@ -67,6 +67,25 @@ npx agent-fetch https://example.com/article --raw
 # Custom timeout (default: 20s)
 npx agent-fetch https://example.com/article --timeout 30000
 
+# With cookies (inline)
+npx agent-fetch https://example.com/article --cookie "sessionId=abc123; theme=dark"
+
+# With cookies (Netscape cookie file)
+npx agent-fetch https://example.com/article --cookie-file ~/.cookies.txt
+```
+
+**Getting cookies:** Export a Netscape format cookie file from your browser using the [Get cookies.txt Locally](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) Chrome extension, then pass it with `--cookie-file`. Cookies are useful for maintaining authenticated sessions or accessing content that requires login.
+
+```bash
+# Extract only article content, remove navigation
+npx agent-fetch https://example.com/article --select "article" --remove "nav, .sidebar"
+
+# Use specific TLS fingerprint (default: chrome-143)
+npx agent-fetch https://example.com/article --preset "ios-safari-18"
+
+# Extract from local PDF file
+npx agent-fetch ./document.pdf
+
 # Show version
 npx agent-fetch --version
 ```
@@ -108,9 +127,36 @@ const result2 = await httpFetch('https://slow-site.com/article', {
 });
 ```
 
+### Crawl Multiple Pages
+
+Crawl a site and extract articles from multiple pages with depth control:
+
+```bash
+# Crawl with default settings (depth: 3, max 100 pages)
+npx agent-fetch crawl https://example.com
+
+# Crawl deeper with strict concurrency
+npx agent-fetch crawl https://example.com --depth 5 --limit 50 --concurrency 3
+
+# Crawl only matching URLs
+npx agent-fetch crawl https://example.com --include "*/blog/*" --exclude "**/archive/**"
+
+# Allow cross-origin crawling
+npx agent-fetch crawl https://example.com --no-same-origin
+
+# Add delay between requests (rate limiting)
+npx agent-fetch crawl https://example.com --delay 1000
+
+# With cookies and custom selectors
+npx agent-fetch crawl https://example.com --cookie-file ~/.cookies.txt --select "article"
+
+# Output as JSON for programmatic processing
+npx agent-fetch crawl https://example.com --json
+```
+
 ## How Extraction Works
 
-agent-fetch runs 7 extraction strategies in parallel and picks the most complete result. No single method works for every site — modern pages use frameworks, APIs, and structured data that each require different approaches.
+agent-fetch runs multiple extraction strategies in parallel and picks the most complete result. No single method works for every site — modern pages use frameworks, APIs, and structured data that each require different approaches.
 
 | Strategy                    | What it does                                                    | Best for                                    |
 | --------------------------- | --------------------------------------------------------------- | ------------------------------------------- |
