@@ -13,14 +13,14 @@ Also useful for:
 - **RAG pipelines** need clean markdown from web pages, not HTML soup or truncated summaries
 - **LLM conversations** where you need the full article in context, not a 3-paragraph summary
 
-|                           | Built-in agent fetch  | Cloud extraction APIs | agent-fetch                                                                                     |
-| ------------------------- | --------------------- | --------------------- | ----------------------------------------------------------------------------------------------- |
-| **Content**               | Summary or truncation | Full (usually)        | Full article text                                                                               |
-| **Structure**             | Plain text blob       | Markdown (varies)     | Markdown with headings, links, lists                                                            |
-| **Runs locally**          | Yes                   | No                    | Yes                                                                                             |
-| **API key required**      | No                    | Yes                   | No                                                                                              |
+|                           | Built-in agent fetch  | Cloud extraction APIs | agent-fetch                                                                        |
+| ------------------------- | --------------------- | --------------------- | ---------------------------------------------------------------------------------- |
+| **Content**               | Summary or truncation | Full (usually)        | Full article text                                                                  |
+| **Structure**             | Plain text blob       | Markdown (varies)     | Markdown with headings, links, lists                                               |
+| **Runs locally**          | Yes                   | No                    | Yes                                                                                |
+| **API key required**      | No                    | Yes                   | No                                                                                 |
 | **Extraction strategies** | 1 (basic parse)       | 1–2                   | Multiple (Readability, JSON-LD, Next.js, RSC, WP API, text-density, CSS selectors) |
-| **Open source**           | N/A                   | Partial               | Yes                                                                                             |
+| **Open source**           | N/A                   | Partial               | Yes                                                                                |
 
 ## Install
 
