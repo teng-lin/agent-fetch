@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documented cookie file, web crawling, CSS selector, PDF, and TLS preset features
+
+## [0.1.6] - 2026-02-14
+
+### Added
+
+- Netscape HTTP Cookie File support via `--cookie-file` flag and `AGENT_FETCH_COOKIE_FILE` env var
+- Cookie file cookies merge with `--cookie` flags; explicit `--cookie` values take precedence on conflicts
+
+## [0.1.5] - 2026-02-14
+
+### Added
+
+- Mobile API extraction with configurable auth token and token type for publisher endpoints
+- Web crawler with sliding-window concurrency
+- 183 new integration tests; coverage thresholds enforced in CI
+
+### Changed
+
+- Decomposed monolithic modules into focused sub-modules (content-extractors, http-fetch)
+- E2E analysis scripts now group results by site name by default (`--no-group` to disable)
+- E2E tests default to `TEST_SET=all` (previously `stable`)
+
+### Fixed
+
+- CLI process hangs caused by httpcloak orphaned libuv references — `process.exit(0)` in CLI entry point
+- E2E `minWords` threshold bug
+- Type-safe `FetchError`; `TurndownService` cached as singleton for batch performance
+- Request correlation IDs added to fetch-layer logs for tracing concurrent requests
+
 ## [0.1.4] - 2026-02-05
 
 ### Added
@@ -71,7 +103,9 @@ Initial release.
 - Site-specific configuration via `AGENT_FETCH_SITES_JSON`
 - E2E test framework with SQLite database recording
 
-[Unreleased]: https://github.com/teng-lin/agent-fetch/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/teng-lin/agent-fetch/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/teng-lin/agent-fetch/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/teng-lin/agent-fetch/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/teng-lin/agent-fetch/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/teng-lin/agent-fetch/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/teng-lin/agent-fetch/compare/v0.1.1...v0.1.2
